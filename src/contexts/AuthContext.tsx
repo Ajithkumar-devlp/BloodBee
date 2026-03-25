@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 interface UserProfile {
@@ -40,19 +40,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(firebaseUser ?? null);
       
       if (firebaseUser) {
-        // Real-time listener: if the background registration hasn't saved the profile yet,
-        // it will wait and auto-update the UI whenever the save finishes!
-        try {
-          profileUnsubscribe = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnap) => {
+        profileUnsubscribe = onSnapshot(
+          doc(db, 'users', firebaseUser.uid),
+          async (docSnap) => {
             if (docSnap.exists()) {
               setProfile(docSnap.data() as UserProfile);
+            } else {
+              // Profile doc missing — create a minimal one so the dashboard is never blank.
+              // This handles accounts registered before Firestore rules were opened.
+              const fallback: UserProfile = {
+                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'BloodBee User',
+                bloodGroup: '',
+                isDonor: false,
+                location: '',
+                reliabilityScore: 100,
+                donationCount: 0,
+              };
+              try {
+                await setDoc(doc(db, 'users', firebaseUser.uid), {
+                  ...fallback,
+                  email: firebaseUser.email,
+                  registeredAt: serverTimestamp(),
+                });
+              } catch (_) {
+                // Rules still closed — just use fallback locally so UI doesn't block
+                setProfile(fallback);
+              }
             }
-          }, (err) => {
-            console.warn('Profile sync deferred (offline or network issue)', err);
-          });
-        } catch (err) {
-          console.error(err);
-        }
+          },
+          (err) => {
+            console.warn('Firestore profile error — using local fallback', err.code);
+            // Still set a minimal profile so PrivateRoute doesn't bounce
+            setProfile({
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Hero',
+              bloodGroup: '',
+              isDonor: false,
+              location: '',
+              reliabilityScore: 100,
+              donationCount: 0,
+            });
+          }
+        );
       } else {
         if (profileUnsubscribe) {
           profileUnsubscribe();
