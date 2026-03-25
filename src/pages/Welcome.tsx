@@ -1,6 +1,6 @@
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Zap, Heart, Shield, Users, ArrowRight, Droplets } from 'lucide-react';
+import { Zap, Heart, Shield, Users, ArrowRight } from 'lucide-react';
 
 const BLOOD_GROUPS = ['A+', 'B+', 'O+', 'AB+', 'A-', 'B-', 'O-', 'AB-'];
 
