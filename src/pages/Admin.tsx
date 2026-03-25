@@ -1,8 +1,7 @@
-import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import { collection, query, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { Shield, Users, Activity, AlertCircle, Search, TrendingUp, Filter } from 'lucide-react';
+import { Shield, Users, Activity, AlertCircle, Search, TrendingUp, Map } from 'lucide-react';
 
 interface Stats {
   totalUsers: number;
@@ -12,7 +11,6 @@ interface Stats {
 }
 
 export default function Admin() {
-  const { user } = useAuth();
   const [stats] = useState<Stats>({
     totalUsers: 1420,
     totalRequests: 89,
@@ -21,24 +19,41 @@ export default function Admin() {
   });
 
   const [recentLogs, setRecentLogs] = useState<any[]>([]);
+  const [heatmap, setHeatmap] = useState<{ location: string; count: number }[]>([]);
 
   useEffect(() => {
-    // Monitor all requests (simulated for now, or real if we want)
-    const q = query(
-      collection(db, 'blood_requests'),
-      orderBy('createdAt', 'desc'),
-      limit(10)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const logs: any[] = [];
-      snapshot.forEach(doc => {
-        logs.push({ id: doc.id, ...doc.data() });
-      });
-      setRecentLogs(logs);
+    // Monitor all requests
+    const qLogs = query(collection(db, 'blood_requests'), orderBy('createdAt', 'desc'), limit(10));
+    const unsubLogs = onSnapshot(qLogs, (snapshot) => {
+      setRecentLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    return unsubscribe;
+    // Generate Donor Density Heatmap
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        const counts: Record<string, number> = {};
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.isDonor) {
+            const loc = data.location || 'Unknown';
+            const city = loc.split(',')[0].trim();
+            counts[city] = (counts[city] || 0) + 1;
+          }
+        });
+        const sorted = Object.entries(counts)
+          .map(([location, count]) => ({ location, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+        setHeatmap(sorted);
+      },
+      (err) => console.error("Admin Heatmap Error:", err)
+    );
+
+    return () => {
+      unsubLogs();
+      unsubUsers();
+    };
   }, []);
 
   return (
@@ -168,17 +183,31 @@ export default function Admin() {
 
           <div className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-xl">
              <h3 className="font-black text-slate-900 text-lg mb-6 flex items-center gap-2">
-               <Filter className="text-slate-400" size={20} /> System Performance
+               <Map className="text-orange-500" size={20} /> Regional Donor Heat Map
              </h3>
-             <div className="space-y-5">
-               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                 <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Avg Notification Time</span>
-                 <span className="text-lg font-black text-slate-900">1.2s</span>
-               </div>
-               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                 <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Donor Pickup Rate</span>
-                 <span className="text-lg font-black text-slate-900">94.5%</span>
-               </div>
+             <p className="text-sm font-medium text-slate-500 mb-6">Live concentration of available active donors by city.</p>
+             <div className="space-y-4">
+               {heatmap.length === 0 ? (
+                 <div className="text-center py-6 text-slate-400 text-sm font-bold">No location data found</div>
+               ) : (
+                 heatmap.map((region, i) => {
+                   const maxCount = heatmap[0].count; // highest count
+                   const percentage = Math.max(10, Math.round((region.count / maxCount) * 100));
+                   // Color scale based on density
+                   const colorClass = percentage > 80 ? 'bg-orange-500' : percentage > 40 ? 'bg-orange-400' : 'bg-orange-300';
+                   return (
+                     <div key={i} className="relative">
+                       <div className="flex justify-between text-xs font-black uppercase tracking-widest mb-1.5 z-10 relative">
+                         <span className="text-slate-700">{region.location}</span>
+                         <span className="text-orange-600">{region.count} Donors</span>
+                       </div>
+                       <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                         <div className={`${colorClass} h-full rounded-full transition-all duration-1000 shadow-sm`} style={{ width: `${percentage}%` }}></div>
+                       </div>
+                     </div>
+                   );
+                 })
+               )}
              </div>
           </div>
         </div>

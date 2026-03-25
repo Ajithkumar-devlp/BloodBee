@@ -131,7 +131,7 @@ export default function Welcome() {
           </div>
           <span className="text-sm font-bold text-red-600 dark:text-red-400 flex items-center gap-1.5">
             <span className="w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse" />
-            Live network active — 247 donors online now
+            Live network active 24/7 — donors online now
           </span>
           <div className="flex gap-1 items-end h-8">
             {[5, 8, 4, 7, 3, 9, 6, 4, 8, 5, 7, 3, 6].map((h, i) => (
@@ -161,29 +161,7 @@ export default function Welcome() {
           ))}
         </div>
 
-        {/* Emergency CTA strip */}
-        <div className="relative bg-gradient-to-r from-red-600 via-red-700 to-red-900 rounded-[2rem] p-8 sm:p-10 text-white overflow-hidden mb-10"
-          style={{ animation: 'slideUp 0.7s ease-out 0.6s both' }}>
-          <div className="absolute inset-0 overflow-hidden">
-            <div className="absolute -top-10 -right-10 w-48 h-48 bg-white/5 rounded-full" />
-            <div className="absolute -bottom-10 -left-10 w-64 h-64 bg-white/5 rounded-full" />
-          </div>
-          <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
-            <div className="text-center sm:text-left">
-              <div className="flex items-center gap-2 justify-center sm:justify-start mb-2">
-                <span className="w-2.5 h-2.5 bg-green-400 rounded-full animate-ping" />
-                <span className="text-green-300 text-sm font-black uppercase tracking-wider">Emergency Mode</span>
-              </div>
-              <h2 className="text-3xl font-black mb-1">In Critical Need?</h2>
-              <p className="text-red-200 font-medium">No login required — broadcast SOS to all donors instantly</p>
-            </div>
-            <Link to="/emergency"
-              className="flex items-center gap-3 px-8 py-4 bg-white text-red-700 font-black rounded-2xl hover:bg-red-50 transition-all transform hover:scale-105 shadow-xl shrink-0 text-lg">
-              <Droplets size={22} fill="currentColor" />
-              One-Tap SOS
-            </Link>
-          </div>
-        </div>
+
 
         {/* Footer note */}
         <p className="text-slate-400 dark:text-slate-600 text-sm font-medium">

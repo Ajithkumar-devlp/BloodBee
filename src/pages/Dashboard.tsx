@@ -1,10 +1,11 @@
-import { Navigation, CheckCircle2, Clock, Activity, MapPin, Award, Heart, Shield, Bell, Star, TrendingUp, Users, MessageSquare, X } from 'lucide-react';
+import { Navigation, CheckCircle2, Clock, Activity, MapPin, Heart, Shield, Bell, Star, TrendingUp, Users, MessageSquare, X, Map, Tent } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { Link, useLocation } from 'react-router-dom';
+import { acceptBloodRequestMatch } from '../services/bloodMatching';
 
 interface BloodRequest {
   id: string;
@@ -15,6 +16,8 @@ interface BloodRequest {
   status: string;
   createdAt: string;
   isSOS?: boolean;
+  matchNotificationId?: string;
+  matchStatus?: string;
 }
 
 const BADGES = [
@@ -39,14 +42,16 @@ const COMMUNITY = [
 ];
 
 export default function Dashboard() {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const { t } = useTheme();
   const location = useLocation();
   const [activeRequests, setActiveRequests] = useState<BloodRequest[]>([]);
   const [isAvailable, setIsAvailable] = useState(true);
+  const [acceptingRequestId, setAcceptingRequestId] = useState<string | null>(null);
   const [showWelcomeToast, setShowWelcomeToast] = useState(
     !!(location.state as any)?.justRegistered
   );
+  const [heatmap, setHeatmap] = useState<{ location: string; count: number }[]>([]);
   const donationCount = profile?.donationCount ?? 0;
 
   // Auto-dismiss toast after 5 seconds
@@ -58,26 +63,93 @@ export default function Dashboard() {
   }, [showWelcomeToast]);
 
   useEffect(() => {
-    if (!profile) return;
-    const q = query(collection(db, 'blood_requests'), where('status', '==', 'pending'));
+    if (!profile || !user) return;
+
+    const q = profile.isDonor
+      ? query(collection(db, 'notifications'), where('recipientUserId', '==', user.uid))
+      : query(collection(db, 'blood_requests'), where('requesterUserId', '==', user.uid));
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const reqs: BloodRequest[] = [];
-      snapshot.forEach(doc => reqs.push({ id: doc.id, ...doc.data() } as BloodRequest));
-      const compatible = reqs.filter(r =>
-        !profile.isDonor || r.bloodGroup === profile.bloodGroup || r.bloodGroup.startsWith('O')
+      if (profile.isDonor) {
+        const matchedRequests: BloodRequest[] = [];
+
+        snapshot.forEach(notificationDoc => {
+          const notification = notificationDoc.data();
+          if (!['unread', 'read', 'accepted'].includes(notification.status)) return;
+
+          matchedRequests.push({
+            id: notification.requestId,
+            patientName: notification.patientName,
+            bloodGroup: notification.bloodGroup,
+            location: notification.location,
+            urgency: notification.urgency,
+            status: notification.status === 'accepted' ? 'matched' : 'pending',
+            createdAt: notification.createdAt,
+            isSOS: !!notification.isSOS,
+            matchNotificationId: notificationDoc.id,
+            matchStatus: notification.status,
+          });
+        });
+
+        setActiveRequests(
+          matchedRequests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        );
+        return;
+      }
+
+      const ownRequests: BloodRequest[] = [];
+      snapshot.forEach(requestDoc => ownRequests.push({ id: requestDoc.id, ...requestDoc.data() } as BloodRequest));
+      setActiveRequests(
+        ownRequests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       );
-      setActiveRequests(compatible.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     });
-    return unsubscribe;
-  }, [profile]);
+
+    const unsubscribeUsers = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        const counts: Record<string, number> = {};
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.isDonor) {
+            const loc = data.location || 'Unknown';
+            const city = loc.split(',')[0].trim();
+            counts[city] = (counts[city] || 0) + 1;
+          }
+        });
+        const sorted = Object.entries(counts)
+          .map(([location, count]) => ({ location, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+        setHeatmap(sorted);
+      },
+      (err) => console.error("Heatmap Error:", err)
+    );
+
+    return () => {
+      unsubscribe();
+      unsubscribeUsers();
+    };
+  }, [profile, user]);
+
+  const handleAcceptMatch = async (request: BloodRequest) => {
+    if (!user || !profile || request.matchStatus === 'accepted') return;
+
+    setAcceptingRequestId(request.id);
+    try {
+      await acceptBloodRequestMatch(request.id, user.uid, profile.name || user.email || 'BloodBee Donor');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAcceptingRequestId(null);
+    }
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
       {/* ── Account Created Toast ── */}
       {showWelcomeToast && (
-        <div className="flex items-center gap-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded-2xl px-5 py-4 shadow-lg"
-          style={{ animation: 'slideDown 0.4s ease-out both' }}>
+        <div className="flex items-center gap-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded-2xl px-5 py-4 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
           <div className="w-10 h-10 bg-green-100 dark:bg-green-800/50 rounded-xl flex items-center justify-center shrink-0">
             <CheckCircle2 className="text-green-600 dark:text-green-400" size={22} />
           </div>
@@ -95,67 +167,73 @@ export default function Dashboard() {
       )}
 
       {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-red-600 to-red-900 rounded-3xl p-8 sm:p-10 text-white shadow-2xl overflow-hidden relative border border-red-500/20">
-        <div className="absolute top-0 right-0 p-8 opacity-10 transform translate-x-12 -translate-y-12"><Heart size={200} /></div>
+      <div className="bg-gradient-to-br from-red-600 via-red-700 to-red-900 rounded-[2.5rem] p-8 sm:p-10 text-white shadow-2xl overflow-hidden relative border border-white/10 animate-in slide-in-from-bottom-8 fade-in duration-700">
+        <div className="absolute top-0 right-0 p-8 opacity-10 transform translate-x-12 -translate-y-12 animate-pulse"><Heart size={200} /></div>
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="space-y-3">
-            <h1 className="text-3xl md:text-5xl font-black tracking-tight">Hello, {profile?.name?.split(' ')[0] || 'Hero'}!</h1>
-            <p className="text-red-100 text-lg max-w-xl font-medium">
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight leading-tight">Hello, {profile?.name?.split(' ')[0] || 'Hero'}!</h1>
+            <p className="text-red-100/90 text-lg max-w-xl font-medium leading-relaxed">
               {profile?.isDonor ? "Your blood type is powerful. You are eligible to donate today!" : "Welcome to BloodBee. Every action helps save lives."}
             </p>
             {profile?.isDonor && (
-              <div className="flex items-center gap-4 mt-6 bg-black/30 backdrop-blur-md w-fit px-5 py-2.5 rounded-2xl border border-white/10">
-                <span className="text-sm font-semibold text-red-50 uppercase tracking-widest">Availability</span>
-                <button onClick={() => setIsAvailable(!isAvailable)}
-                  className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors duration-300 ${isAvailable ? 'bg-green-500' : 'bg-slate-500'}`}>
-                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-300 ${isAvailable ? 'translate-x-8' : 'translate-x-1'}`} />
-                </button>
-                <span className={`text-sm font-black uppercase ${isAvailable ? 'text-green-400' : 'text-slate-300'}`}>
-                  {isAvailable ? 'Active' : 'Busy'}
-                </span>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-8">
+                <div className="flex items-center gap-4 bg-black/20 backdrop-blur-md w-fit px-6 py-3 rounded-2xl border border-white/10 hover:bg-black/30 transition-colors">
+                  <span className="text-sm font-bold text-red-50 uppercase tracking-widest">Availability</span>
+                  <button onClick={() => setIsAvailable(!isAvailable)}
+                    className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors duration-500 ${isAvailable ? 'bg-green-400 shadow-[0_0_15px_rgba(74,222,128,0.5)]' : 'bg-white/20'}`}>
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-500 ${isAvailable ? 'translate-x-8' : 'translate-x-1'}`} />
+                  </button>
+                  <span className={`text-sm font-black uppercase tracking-wider transition-colors duration-300 ${isAvailable ? 'text-green-400' : 'text-slate-300'}`}>
+                    {isAvailable ? 'Active' : 'Busy'}
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md w-fit px-5 py-3 rounded-2xl border border-white/10 hover:bg-white/20 transition-colors cursor-help" title="High Trust Scores prioritize you in the AI matchmaking algorithm">
+                  <Shield size={20} className="text-blue-300" />
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black text-blue-200 uppercase tracking-widest leading-none mb-1">Trust Score</span>
+                    <span className="text-base font-black text-white leading-none">{profile?.reliabilityScore ?? 98}<span className="text-xs text-blue-100/70 font-bold ml-0.5">/100</span></span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-          <div className="flex gap-4 w-full md:w-auto overflow-x-auto pb-4 md:pb-0 pt-4 md:pt-0">
-            {[
-              { v: profile?.reliabilityScore ?? 98, l: 'Reliability' },
-              { v: donationCount, l: 'Donations' },
-              { v: profile?.bloodGroup ?? '?', l: 'Blood Group', highlight: true },
-            ].map(s => (
-              <div key={s.l} className={`backdrop-blur-md rounded-2xl p-5 text-center border min-w-[120px] shadow-xl ${s.highlight ? 'bg-white border-transparent text-red-600' : 'bg-white/10 border-white/20'}`}>
-                <div className="text-3xl font-black">{s.v}</div>
-                <div className={`text-[10px] uppercase tracking-widest font-bold mt-1.5 ${s.highlight ? 'text-red-400' : 'text-red-100'}`}>{s.l}</div>
-              </div>
-            ))}
+          <div className="flex w-full md:w-auto mt-4 md:mt-0">
+            <div className="backdrop-blur-md bg-white rounded-3xl p-6 text-center border border-white/50 shadow-xl w-full md:w-auto transform hover:scale-105 transition-transform duration-300">
+              <div className="text-5xl font-black tracking-tighter text-red-600 drop-shadow-sm">{profile?.bloodGroup ?? '?'}</div>
+              <div className="text-xs uppercase tracking-widest font-black mt-2 text-red-400">Your Blood Type</div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* 🚨 One-Tap Emergency CTA */}
       <Link to="/emergency"
-        className="flex items-center gap-5 p-6 bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 rounded-3xl text-white shadow-2xl shadow-red-500/30 transition-all transform hover:-translate-y-0.5 group cursor-pointer border border-red-500/20">
-        <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center text-3xl shrink-0 group-hover:scale-110 transition-transform animate-pulse">🚨</div>
+        className="flex items-center gap-5 p-6 bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 rounded-[2rem] text-white shadow-[0_8px_30px_rgb(220,38,38,0.3)] hover:shadow-[0_15px_40px_rgb(220,38,38,0.4)] transition-all transform hover:-translate-y-1 group cursor-pointer border border-red-500/30 animate-in slide-in-from-bottom-8 fade-in delay-150 fill-mode-both">
+        <div className="w-16 h-16 bg-white/20 rounded-[1.25rem] flex items-center justify-center text-3xl shrink-0 group-hover:scale-110 transition-transform duration-500">🚨</div>
         <div className="flex-1">
-          <h3 className="font-black text-xl">{t('oneEmergency')}</h3>
-          <p className="text-red-100 text-sm font-medium mt-0.5">No login needed — broadcast an SOS to all nearby donors instantly</p>
+          <h3 className="font-black text-2xl tracking-tight">{t('oneEmergency')}</h3>
+          <p className="text-red-100/90 text-sm font-medium mt-1">No login needed — broadcast an SOS to all nearby donors instantly</p>
         </div>
-        <Navigation size={28} className="shrink-0 group-hover:translate-x-1 transition-transform" />
+        <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center shrink-0 group-hover:bg-white/20 transition-colors hidden sm:flex">
+          <Navigation size={24} className="group-hover:translate-x-1 transition-transform" />
+        </div>
       </Link>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 animate-in slide-in-from-bottom-8 fade-in delay-300 fill-mode-both">
         {[
-          { to: '/request', icon: Activity, label: 'Request Blood', sub: 'AI Triage', color: 'red' },
-          { to: '/hospitals', icon: MapPin, label: 'Hospitals', sub: 'Live Inventory', color: 'blue' },
-          { to: '/passport', icon: Shield, label: 'Health Passport', sub: 'QR Identity', color: 'emerald' },
-          { to: '/camps', icon: Award, label: 'Blood Camps', sub: 'NGO & Events', color: 'orange' },
+          { to: '/request', icon: Activity, label: 'Request Blood', sub: 'AI Match', color: 'red', from: 'from-red-500', toC: 'to-red-600' },
+          { to: '/hospitals', icon: MapPin, label: 'Hospitals', sub: 'Live Inventory', color: 'blue', from: 'from-blue-500', toC: 'to-blue-600' },
+          { to: '/passport', icon: Shield, label: 'Health Passport', sub: 'Verified ID', color: 'emerald', from: 'from-emerald-500', toC: 'to-emerald-600' },
+          { to: '/camps', icon: Tent, label: 'Blood Camps', sub: 'Local Events', color: 'orange', from: 'from-orange-500', toC: 'to-orange-600' },
         ].map(a => (
           <Link key={a.to} to={a.to}
-            className={`bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 hover:border-${a.color}-500 hover:shadow-xl hover:shadow-${a.color}-500/10 transition-all group flex flex-col items-center text-center`}>
-            <div className={`w-14 h-14 bg-${a.color}-50 dark:bg-${a.color}-900/30 text-${a.color}-600 dark:text-${a.color}-400 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform shadow-sm`}>
-              <a.icon size={28} />
+            className={`bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] border border-slate-100 dark:border-slate-700 hover:border-${a.color}-200 transition-all duration-300 group flex flex-col items-center text-center shadow-[0_4px_20px_rgb(0,0,0,0.03)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1`}>
+            <div className={`w-16 h-16 bg-gradient-to-br ${a.from} ${a.toC} text-white rounded-[1.25rem] flex items-center justify-center mb-5 group-hover:scale-110 group-hover:rotate-3 transition-all duration-500 shadow-lg shadow-${a.color}-500/30`}>
+              <a.icon size={28} strokeWidth={2.5} />
             </div>
-            <h3 className="font-bold text-slate-900 dark:text-white text-base">{a.label}</h3>
-            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1 uppercase tracking-wider">{a.sub}</p>
+            <h3 className="font-bold text-slate-900 dark:text-white text-base md:text-lg">{a.label}</h3>
+            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 mt-1.5 uppercase tracking-widest">{a.sub}</p>
           </Link>
         ))}
       </div>
@@ -165,7 +243,7 @@ export default function Dashboard() {
         <div className="xl:col-span-2 space-y-8">
 
           {/* Live Alerts */}
-          <div className="space-y-5">
+          <div className="space-y-5 animate-in slide-in-from-bottom-8 fade-in delay-500 fill-mode-both">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-3">
                 <Bell className="text-red-500" size={26} /> {t('activeAlerts')}
@@ -179,12 +257,18 @@ export default function Dashboard() {
               {activeRequests.length === 0 ? (
                 <div className="col-span-2 py-16 text-center text-slate-500 bg-slate-50 dark:bg-slate-800/40 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-[2rem]">
                   <Heart className="text-slate-300 dark:text-slate-600 mx-auto mb-4" size={48} />
-                  <h3 className="text-xl font-bold text-slate-700 dark:text-slate-300 mb-2">No urgent matches right now</h3>
-                  <p className="text-slate-500 dark:text-slate-400 max-w-sm mx-auto text-sm">We'll notify you instantly when someone needs your blood type.</p>
+                  <h3 className="text-xl font-bold text-slate-700 dark:text-slate-300 mb-2">
+                    {profile?.isDonor ? 'No urgent matches right now' : 'No active blood requests yet'}
+                  </h3>
+                  <p className="text-slate-500 dark:text-slate-400 max-w-sm mx-auto text-sm">
+                    {profile?.isDonor
+                      ? "We'll notify you instantly when someone needs your blood type."
+                      : 'Your blood requests will appear here once they are created.'}
+                  </p>
                 </div>
               ) : (
                 activeRequests.map(req => (
-                  <div key={req.id} className={`bg-white dark:bg-slate-800 border-2 rounded-3xl p-6 shadow-md hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden flex flex-col ${req.isSOS ? 'border-red-400 dark:border-red-700' : 'border-red-100 dark:border-slate-700'}`}>
+                  <div key={req.id} className={`bg-white dark:bg-slate-800 border-2 rounded-[2rem] p-6 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 relative overflow-hidden flex flex-col ${req.isSOS ? 'border-red-300 dark:border-red-700' : 'border-slate-100 dark:border-slate-700'}`}>
                     {req.urgency.includes('Critical') && (
                       <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-red-500 via-red-600 to-red-500"></div>
                     )}
@@ -198,9 +282,9 @@ export default function Dashboard() {
                         {req.bloodGroup}
                       </div>
                       <div>
-                        <h3 className="font-bold text-slate-900 dark:text-white text-lg">{req.patientName || 'Unknown'}</h3>
+                         <h3 className="font-bold text-slate-900 dark:text-white text-lg truncate max-w-[150px]">{req.patientName || 'Unknown'}</h3>
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">
-                          <MapPin size={12} className="text-blue-500" /> {req.location}
+                          <MapPin size={12} className="text-blue-500" /> <span className="truncate max-w-[150px]">{req.location}</span>
                         </div>
                       </div>
                     </div>
@@ -209,9 +293,24 @@ export default function Dashboard() {
                         <Activity size={14} className="animate-pulse" /> CRITICAL PRIORITY
                       </div>
                     )}
-                    <button className="mt-auto w-full bg-slate-900 dark:bg-red-700 hover:bg-red-600 dark:hover:bg-red-600 text-white font-bold py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 group">
-                      <CheckCircle2 size={18} className="group-hover:scale-110 transition-transform" /> Accept Match
-                    </button>
+                    {profile?.isDonor ? (
+                      <button
+                        onClick={() => handleAcceptMatch(req)}
+                        disabled={acceptingRequestId === req.id || req.matchStatus === 'accepted'}
+                        className="mt-auto w-full bg-slate-900 dark:bg-red-700 hover:bg-slate-800 dark:hover:bg-red-600 text-white font-bold py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 group disabled:opacity-70"
+                      >
+                        <CheckCircle2 size={18} className="group-hover:scale-110 transition-transform" />
+                        {req.matchStatus === 'accepted'
+                          ? 'Accepted by You'
+                          : acceptingRequestId === req.id
+                            ? 'Accepting...'
+                            : 'Accept Match'}
+                      </button>
+                    ) : (
+                      <div className="mt-auto w-full bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-200 font-bold py-3.5 rounded-2xl border border-slate-200 dark:border-slate-600 text-center">
+                        {req.status === 'matched' ? 'A donor accepted this request' : 'Matching donors from database'}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -219,7 +318,7 @@ export default function Dashboard() {
           </div>
 
           {/* Predictive Blood Demand */}
-          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-8 border border-slate-200 dark:border-slate-700 shadow-xl">
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-8 border border-slate-100 dark:border-slate-700 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 animate-in slide-in-from-bottom-8 fade-in delay-[600ms] fill-mode-both">
             <h3 className="font-black text-slate-900 dark:text-white text-xl mb-6 flex items-center gap-3">
               <TrendingUp className="text-blue-500" size={26} /> {t('predictive')}
             </h3>
@@ -249,7 +348,7 @@ export default function Dashboard() {
           </div>
 
           {/* Community Feed */}
-          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-8 border border-slate-200 dark:border-slate-700 shadow-xl">
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-8 border border-slate-100 dark:border-slate-700 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 animate-in slide-in-from-bottom-8 fade-in delay-[700ms] fill-mode-both">
             <h3 className="font-black text-slate-900 dark:text-white text-xl mb-6 flex items-center gap-3">
               <Users className="text-emerald-500" size={26} /> {t('communityFeed')}
             </h3>
@@ -280,26 +379,74 @@ export default function Dashboard() {
         {/* Sidebar */}
         <div className="space-y-6">
 
+          {/* Regional Donor Heat Map - LIVE IFRAME */}
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-7 border border-slate-100 dark:border-slate-700 shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden group animate-in slide-in-from-right-8 fade-in delay-[800ms] fill-mode-both">
+             <div className="flex justify-between items-center mb-5">
+               <h3 className="font-black text-slate-900 dark:text-white text-lg flex items-center gap-2">
+                 <Map className="text-orange-500" size={22} /> Network Heat Map
+               </h3>
+               <span className="text-[9px] font-black uppercase tracking-widest text-orange-500 bg-orange-100 dark:bg-orange-900/40 px-2 py-1 rounded-md">Live</span>
+             </div>
+             
+             {/* Map Integration */}
+             <div className="w-full h-48 rounded-2xl overflow-hidden mb-5 border-2 border-slate-100 dark:border-slate-700 relative">
+                <iframe 
+                  src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3886.602280738361!2d80.2079084153408!3d13.060424590799015!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3a5266b033e08fbf%3A0x6b48520bf21e7fc9!2sChennai%2C%20Tamil%20Nadu!5e0!3m2!1sen!2sin!4v1679051052674!5m2!1sen!2sin" 
+                  className="w-full h-full opacity-80 group-hover:opacity-100 transition-opacity duration-500 filter dark:invert dark:hue-rotate-180" 
+                  style={{ border: 0 }} 
+                  allowFullScreen={false} 
+                  loading="lazy" 
+                  referrerPolicy="no-referrer-when-downgrade"
+                ></iframe>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent pointer-events-none"></div>
+                <div className="absolute bottom-3 left-3 text-white text-[10px] font-black tracking-widest uppercase truncate drop-shadow-md">
+                   Tracking {heatmap.reduce((acc, curr) => acc + curr.count, 0)} Active Donors
+                </div>
+             </div>
+
+             <div className="space-y-4 relative">
+               {heatmap.length === 0 ? (
+                 <div className="text-center py-4 text-slate-400 dark:text-slate-500 text-sm font-bold">No location data found</div>
+               ) : (
+                 heatmap.slice(0, 3).map((region, i) => {
+                   const maxCount = heatmap[0]?.count || 1;
+                   const percentage = Math.max(10, Math.round((region.count / maxCount) * 100));
+                   const colorClass = percentage > 80 ? 'bg-orange-500' : percentage > 40 ? 'bg-orange-400' : 'bg-orange-300';
+                   return (
+                     <div key={i} className="relative">
+                       <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-1.5">
+                         <span className="text-slate-700 dark:text-slate-300">{region.location}</span>
+                         <span className="text-orange-600 dark:text-orange-400">{region.count} Donors</span>
+                       </div>
+                       <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
+                         <div className={`${colorClass} h-full rounded-full transition-all duration-1000`} style={{ width: `${percentage}%` }}></div>
+                       </div>
+                     </div>
+                   );
+                 })
+               )}
+             </div>
+          </div>
+
           {/* Gamification Badges */}
-          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-7 border border-slate-200 dark:border-slate-700 shadow-xl">
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] p-7 border border-slate-100 dark:border-slate-700 shadow-[0_8px_30px_rgb(0,0,0,0.04)] animate-in slide-in-from-right-8 fade-in delay-[900ms] fill-mode-both">
             <h3 className="font-black text-slate-900 dark:text-white text-lg mb-5 flex items-center gap-2">
               <Star className="text-yellow-500" size={22} fill="currentColor" /> {t('gamification')}
             </h3>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-5 gap-2">
               {BADGES.map(b => {
-                const earned = b.min > 0 ? donationCount >= b.min : false;
+                const earned = donationCount >= b.min && (b.min > 0 || profile?.isDonor);
                 return (
                   <div key={b.id} title={`${b.label}: ${b.desc}`}
-                    className={`flex flex-col items-center p-3 rounded-2xl border transition-all ${earned ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-700' : 'bg-slate-50 dark:bg-slate-700/50 border-slate-100 dark:border-slate-700 opacity-40 grayscale'}`}>
-                    <span className="text-3xl mb-1.5">{b.icon}</span>
-                    <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 text-center leading-tight uppercase tracking-wide">{b.label}</span>
+                    className={`flex flex-col items-center p-2 rounded-xl border transition-all hover:scale-105 cursor-help ${earned ? 'bg-gradient-to-br from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 border-yellow-200 dark:border-yellow-700 shadow-sm' : 'bg-slate-50 dark:bg-slate-700/30 border-slate-100 dark:border-slate-700 opacity-50 grayscale'}`}>
+                    <span className="text-2xl mb-1">{b.icon}</span>
                   </div>
                 );
               })}
             </div>
             <div className="mt-5 p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
               <div className="flex justify-between items-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">
-                <span>Progress</span>
+                <span>Progress to next Rank</span>
                 <span>{donationCount} / 10 donations</span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2 overflow-hidden">

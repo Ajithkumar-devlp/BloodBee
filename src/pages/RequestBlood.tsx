@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import { Heart, Activity, MapPin, Search } from 'lucide-react';
-import { collection, addDoc } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { createBloodRequestWithMatches } from '../services/bloodMatching';
 
 export default function RequestBlood() {
+  const { user, profile } = useAuth();
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [matchCount, setMatchCount] = useState(0);
+  const [matchedGroups, setMatchedGroups] = useState<string[]>([]);
   
   const [formData, setFormData] = useState({
     patientName: '',
@@ -17,18 +21,19 @@ export default function RequestBlood() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+    setError('');
     try {
-      await Promise.race([
-        addDoc(collection(db, 'blood_requests'), {
-          ...formData,
-          status: 'pending',
-          createdAt: new Date().toISOString()
-        }),
-        new Promise(r => setTimeout(r, 1500))
-      ]);
+      const result = await createBloodRequestWithMatches({
+        ...formData,
+        requesterUserId: user?.uid,
+        requesterName: profile?.name || user?.email || formData.patientName,
+      });
+      setMatchCount(result.matches.length);
+      setMatchedGroups([...new Set(result.matches.map(match => match.bloodGroup))]);
       setStep(3);
     } catch (err) {
       console.error(err);
+      setError('Unable to notify donors right now. Please try again.');
     }
     setSubmitting(false);
   };
@@ -115,6 +120,9 @@ export default function RequestBlood() {
               <button onClick={handleSubmit} disabled={submitting} className="w-full max-w-xs py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-600/20 transition-all flex justify-center items-center">
                 {submitting ? 'Notifying...' : 'Notify Top 5 Matches'}
               </button>
+              {error && (
+                <p className="mt-4 text-sm font-medium text-red-600">{error}</p>
+              )}
             </div>
           )}
 
@@ -131,7 +139,10 @@ export default function RequestBlood() {
                 <div className="space-y-4">
                   <div className="flex items-center space-x-3 text-green-600">
                     <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></div>
-                    <span className="font-medium">Notified 5 O+ donors nearby</span>
+                    <span className="font-medium">
+                      Notified {matchCount} matched donor{matchCount === 1 ? '' : 's'}
+                      {matchedGroups.length > 0 ? ` (${matchedGroups.join(', ')})` : ''}
+                    </span>
                   </div>
                   <div className="flex items-center space-x-3 text-slate-500">
                     <div className="w-2 h-2 bg-slate-300 rounded-full"></div>
