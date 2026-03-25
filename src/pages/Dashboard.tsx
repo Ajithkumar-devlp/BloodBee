@@ -65,19 +65,38 @@ export default function Dashboard() {
   useEffect(() => {
     if (!profile || !user) return;
 
-    const q = profile.isDonor
-      ? query(collection(db, 'notifications'), where('recipientUserId', '==', user.uid))
-      : query(collection(db, 'blood_requests'), where('requesterUserId', '==', user.uid));
+    let latestIncoming: BloodRequest[] = [];
+    let latestOutgoing: BloodRequest[] = [];
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      if (profile.isDonor) {
-        const matchedRequests: BloodRequest[] = [];
+    const mergeRequests = (inReqs: BloodRequest[], outReqs: BloodRequest[]) => {
+      const combined = [...inReqs, ...outReqs].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      // Remove duplicates in case a user matches their own request
+      const unique = combined.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+      setActiveRequests(unique);
+    };
 
-        snapshot.forEach(notificationDoc => {
-          const notification = notificationDoc.data();
+    // 1. Listen for requests made BY this user
+    const qOutgoing = query(collection(db, 'blood_requests'), where('requesterUserId', '==', user.uid));
+    const unsubscribeOutgoing = onSnapshot(qOutgoing, (snapshot) => {
+      const reqs: BloodRequest[] = [];
+      snapshot.forEach(doc => reqs.push({ id: doc.id, ...doc.data() } as BloodRequest));
+      latestOutgoing = reqs;
+      mergeRequests(latestIncoming, latestOutgoing);
+    });
+
+    // 2. Listen for matches sent TO this user (if they are a donor)
+    let unsubscribeIncoming: (() => void) | undefined;
+    if (profile.isDonor) {
+      const qIncoming = query(collection(db, 'notifications'), where('recipientUserId', '==', user.uid));
+      unsubscribeIncoming = onSnapshot(qIncoming, (snapshot) => {
+        const matches: BloodRequest[] = [];
+        snapshot.forEach(docSnap => {
+          const notification = docSnap.data();
           if (!['unread', 'read', 'accepted'].includes(notification.status)) return;
 
-          matchedRequests.push({
+          matches.push({
             id: notification.requestId,
             patientName: notification.patientName,
             bloodGroup: notification.bloodGroup,
@@ -86,23 +105,14 @@ export default function Dashboard() {
             status: notification.status === 'accepted' ? 'matched' : 'pending',
             createdAt: notification.createdAt,
             isSOS: !!notification.isSOS,
-            matchNotificationId: notificationDoc.id,
+            matchNotificationId: docSnap.id,
             matchStatus: notification.status,
           });
         });
-
-        setActiveRequests(
-          matchedRequests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        );
-        return;
-      }
-
-      const ownRequests: BloodRequest[] = [];
-      snapshot.forEach(requestDoc => ownRequests.push({ id: requestDoc.id, ...requestDoc.data() } as BloodRequest));
-      setActiveRequests(
-        ownRequests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      );
-    });
+        latestIncoming = matches;
+        mergeRequests(latestIncoming, latestOutgoing);
+      });
+    }
 
     const unsubscribeUsers = onSnapshot(
       collection(db, 'users'),
@@ -126,7 +136,8 @@ export default function Dashboard() {
     );
 
     return () => {
-      unsubscribe();
+      unsubscribeOutgoing();
+      if (unsubscribeIncoming) unsubscribeIncoming();
       unsubscribeUsers();
     };
   }, [profile, user]);
