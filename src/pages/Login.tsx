@@ -3,6 +3,7 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Eye, EyeOff, Zap, ArrowRight } from 'lucide-react';
 
 const BLOOD_GROUPS = ['A+', 'B+', 'O+', 'AB+', 'A-', 'B-', 'O-', 'AB-'];
@@ -31,13 +32,19 @@ const SHARED_STYLES = `
 
 export default function Login() {
   const { t } = useTheme();
+  const { user } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const navigate = useNavigate();
+
+  // Already logged in? Go straight to dashboard
+  if (user) {
+    navigate('/dashboard', { replace: true });
+    return null;
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,9 +52,8 @@ export default function Login() {
     setError('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      setLoading(false);
-      setSuccess(true);
-      setTimeout(() => navigate('/dashboard'), 1500);
+      // Navigate immediately — no delay needed
+      navigate('/dashboard', { replace: true });
     } catch (err: any) {
       if (err.code === 'auth/network-request-failed') {
         setError('Network error. Please check your connection.');
@@ -150,72 +156,55 @@ export default function Login() {
             <span className="text-xl font-black bg-gradient-to-r from-red-600 to-red-800 bg-clip-text text-transparent">BloodBee</span>
           </div>
 
-          {/* Success state */}
-          {success ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center space-y-5" style={{ animation: 'slideUp 0.4s ease-out both' }}>
-              <div className="relative">
-                <div className="w-24 h-24 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center border-4 border-green-400 shadow-xl shadow-green-400/20 animate-bounce">
-                  <svg className="w-12 h-12 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <span className="absolute inset-0 rounded-full border-4 border-green-400/30 animate-ping" />
-              </div>
-              <div>
-                <h2 className="text-3xl font-black text-slate-900 dark:text-white">Welcome Back! 👋</h2>
-                <p className="text-slate-500 dark:text-slate-400 mt-1 font-medium">Taking you to your dashboard…</p>
-              </div>
+          {/* Sign in form */}
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-4xl font-black text-slate-900 dark:text-white">{t('signIn')}</h2>
+              <p className="text-slate-500 dark:text-slate-400 mt-1.5 font-medium">Welcome back. The network needs you.</p>
             </div>
-          ) : (
-            <>
-              <div>
-                <h2 className="text-4xl font-black text-slate-900 dark:text-white">{t('signIn')}</h2>
-                <p className="text-slate-500 dark:text-slate-400 mt-1.5 font-medium">Welcome back. The network needs you.</p>
+
+            {error && (
+              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 p-3.5 rounded-2xl text-sm flex items-center gap-2" style={{ animation: 'slideUp 0.3s ease-out both' }}>
+                <span>⚠️</span> {error}
+              </div>
+            )}
+
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div style={{ animation: 'slideUp 0.5s ease-out 0.2s both' }}>
+                <label className="block text-sm font-bold text-slate-600 dark:text-slate-300 mb-1.5">{t('email')}</label>
+                <input type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com" className={inputCls} />
               </div>
 
-              {error && (
-                <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 p-3.5 rounded-2xl text-sm flex items-center gap-2" style={{ animation: 'slideUp 0.3s ease-out both' }}>
-                  <span>⚠️</span> {error}
+              <div className="relative" style={{ animation: 'slideUp 0.5s ease-out 0.3s both' }}>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="block text-sm font-bold text-slate-600 dark:text-slate-300">{t('password')}</label>
+                  <a href="#" className="text-xs text-red-600 dark:text-red-400 font-bold hover:underline">Forgot?</a>
                 </div>
-              )}
+                <input type={showPass ? 'text' : 'password'} required value={password} onChange={e => setPassword(e.target.value)}
+                  placeholder="Your password" className={`${inputCls} pr-12`} />
+                <button type="button" onClick={() => setShowPass(s => !s)}
+                  className="absolute right-3 top-10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                  {showPass ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div style={{ animation: 'slideUp 0.5s ease-out 0.2s both' }}>
-                  <label className="block text-sm font-bold text-slate-600 dark:text-slate-300 mb-1.5">{t('email')}</label>
-                  <input type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)}
-                    placeholder="you@example.com" className={inputCls} />
-                </div>
+              <div style={{ animation: 'slideUp 0.5s ease-out 0.4s both' }}>
+                <button disabled={loading}
+                  className="w-full py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black rounded-2xl shadow-xl shadow-red-500/25 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 text-lg disabled:opacity-70 group">
+                  {loading
+                    ? <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Signing In...</>
+                    : <><Zap size={20} fill="white" /> {t('signIn')} <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" /></>
+                  }
+                </button>
+              </div>
+            </form>
 
-                <div className="relative" style={{ animation: 'slideUp 0.5s ease-out 0.3s both' }}>
-                  <div className="flex justify-between items-center mb-1.5">
-                    <label className="block text-sm font-bold text-slate-600 dark:text-slate-300">{t('password')}</label>
-                    <a href="#" className="text-xs text-red-600 dark:text-red-400 font-bold hover:underline">Forgot?</a>
-                  </div>
-                  <input type={showPass ? 'text' : 'password'} required value={password} onChange={e => setPassword(e.target.value)}
-                    placeholder="Your password" className={`${inputCls} pr-12`} />
-                  <button type="button" onClick={() => setShowPass(s => !s)}
-                    className="absolute right-3 top-10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-                    {showPass ? <EyeOff size={20} /> : <Eye size={20} />}
-                  </button>
-                </div>
-
-                <div style={{ animation: 'slideUp 0.5s ease-out 0.4s both' }}>
-                  <button disabled={loading}
-                    className="w-full py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black rounded-2xl shadow-xl shadow-red-500/25 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 text-lg disabled:opacity-70 group">
-                    {loading
-                      ? <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Signing In...</>
-                      : <><Zap size={20} fill="white" /> {t('signIn')} <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" /></>
-                    }
-                  </button>
-                </div>
-              </form>
-
-              <p className="text-center text-slate-500 dark:text-slate-400 text-sm" style={{ animation: 'slideUp 0.5s ease-out 0.5s both' }}>
-                {t('noAccount')}{' '}
-                <Link to="/register" className="text-red-600 dark:text-red-400 font-black hover:underline">{t('signUp')}</Link>
-              </p>
-            </>
-          )}
+            <p className="text-center text-slate-500 dark:text-slate-400 text-sm" style={{ animation: 'slideUp 0.5s ease-out 0.5s both' }}>
+              {t('noAccount')}{' '}
+              <Link to="/register" className="text-red-600 dark:text-red-400 font-black hover:underline">{t('signUp')}</Link>
+            </p>
+          </div>
         </div>
       </div>
     </div>
