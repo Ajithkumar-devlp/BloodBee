@@ -80,84 +80,89 @@ export function getCompatibleDonorGroups(recipientBloodGroup: string) {
 }
 
 export async function createBloodRequestWithMatches(input: BloodRequestInput) {
-  const createdAt = new Date().toISOString();
-  const compatibleGroups = getCompatibleDonorGroups(input.bloodGroup);
+  return Promise.race([
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout: Firebase matchmaking took too long (connection issue).")), 15000)),
+    (async () => {
+      const createdAt = new Date().toISOString();
+      const compatibleGroups = getCompatibleDonorGroups(input.bloodGroup);
 
-  const requestRef = await addDoc(collection(db, 'blood_requests'), {
-    ...input,
-    compatibleGroups,
-    createdAt,
-    status: 'pending',
-    notifiedDonorCount: 0,
-    acceptedDonorId: null,
-    acceptedDonorName: null,
-    acceptedAt: null,
-  });
-
-  const usersSnapshot = await getDocs(collection(db, 'users'));
-  const donorMatches: MatchResult[] = usersSnapshot.docs
-    .map(userDoc => ({ id: userDoc.id, ...userDoc.data() } as DonorProfile))
-    .filter(profile =>
-      profile.isDonor &&
-      compatibleGroups.includes(profile.bloodGroup) &&
-      profile.id !== input.requesterUserId
-    )
-    .sort((a, b) => {
-      const locationDelta = locationScore(input.location, b.location) - locationScore(input.location, a.location);
-      if (locationDelta !== 0) return locationDelta;
-
-      const reliabilityDelta = (b.reliabilityScore ?? 0) - (a.reliabilityScore ?? 0);
-      if (reliabilityDelta !== 0) return reliabilityDelta;
-
-      return (b.donationCount ?? 0) - (a.donationCount ?? 0);
-    })
-    .slice(0, 5)
-    .map(profile => ({
-      donorId: profile.id,
-      donorName: profile.name || 'Available Donor',
-      bloodGroup: profile.bloodGroup,
-      location: profile.location || 'Nearby',
-      reliabilityScore: profile.reliabilityScore ?? 0,
-      donationCount: profile.donationCount ?? 0,
-    }));
-
-  if (donorMatches.length > 0) {
-    const batch = writeBatch(db);
-
-    donorMatches.forEach(match => {
-      const notificationRef = doc(collection(db, 'notifications'));
-      batch.set(notificationRef, {
-        type: 'blood_match',
-        requestId: requestRef.id,
-        recipientUserId: match.donorId,
-        requesterUserId: input.requesterUserId ?? null,
-        requesterName: input.requesterName ?? input.patientName,
-        patientName: input.patientName,
-        bloodGroup: input.bloodGroup,
-        donorBloodGroup: match.bloodGroup,
-        urgency: input.urgency,
-        location: input.location,
-        phone: input.phone ?? '',
-        description: input.description ?? '',
-        isSOS: !!input.isSOS,
-        status: 'unread',
+      const requestRef = await addDoc(collection(db, 'blood_requests'), {
+        ...input,
+        compatibleGroups,
         createdAt,
-        readAt: null,
+        status: 'pending',
+        notifiedDonorCount: 0,
+        acceptedDonorId: null,
+        acceptedDonorName: null,
+        acceptedAt: null,
       });
-    });
 
-    batch.update(requestRef, {
-      notifiedDonorCount: donorMatches.length,
-      notifiedDonorIds: donorMatches.map(match => match.donorId),
-    });
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      const donorMatches: MatchResult[] = usersSnapshot.docs
+        .map(userDoc => ({ id: userDoc.id, ...userDoc.data() } as DonorProfile))
+        .filter(profile =>
+          profile.isDonor &&
+          compatibleGroups.includes(profile.bloodGroup) &&
+          profile.id !== input.requesterUserId
+        )
+        .sort((a, b) => {
+          const locationDelta = locationScore(input.location, b.location) - locationScore(input.location, a.location);
+          if (locationDelta !== 0) return locationDelta;
 
-    await batch.commit();
-  }
+          const reliabilityDelta = (b.reliabilityScore ?? 0) - (a.reliabilityScore ?? 0);
+          if (reliabilityDelta !== 0) return reliabilityDelta;
 
-  return {
-    requestId: requestRef.id,
-    matches: donorMatches,
-  };
+          return (b.donationCount ?? 0) - (a.donationCount ?? 0);
+        })
+        .slice(0, 5)
+        .map(profile => ({
+          donorId: profile.id,
+          donorName: profile.name || 'Available Donor',
+          bloodGroup: profile.bloodGroup,
+          location: profile.location || 'Nearby',
+          reliabilityScore: profile.reliabilityScore ?? 0,
+          donationCount: profile.donationCount ?? 0,
+        }));
+
+      if (donorMatches.length > 0) {
+        const batch = writeBatch(db);
+
+        donorMatches.forEach(match => {
+          const notificationRef = doc(collection(db, 'notifications'));
+          batch.set(notificationRef, {
+            type: 'blood_match',
+            requestId: requestRef.id,
+            recipientUserId: match.donorId,
+            requesterUserId: input.requesterUserId ?? null,
+            requesterName: input.requesterName ?? input.patientName,
+            patientName: input.patientName,
+            bloodGroup: input.bloodGroup,
+            donorBloodGroup: match.bloodGroup,
+            urgency: input.urgency,
+            location: input.location,
+            phone: input.phone ?? '',
+            description: input.description ?? '',
+            isSOS: !!input.isSOS,
+            status: 'unread',
+            createdAt,
+            readAt: null,
+          });
+        });
+
+        batch.update(requestRef, {
+          notifiedDonorCount: donorMatches.length,
+          notifiedDonorIds: donorMatches.map(match => match.donorId),
+        });
+
+        await batch.commit();
+      }
+
+      return {
+        requestId: requestRef.id,
+        matches: donorMatches,
+      };
+    })()
+  ]);
 }
 
 export async function acceptBloodRequestMatch(requestId: string, donorUserId: string, donorName: string) {
