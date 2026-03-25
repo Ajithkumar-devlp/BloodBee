@@ -25,8 +25,8 @@ export default function RequestBlood() {
     try {
       const result = await createBloodRequestWithMatches({
         ...formData,
-        requesterUserId: user?.uid,
-        requesterName: profile?.name || user?.email || formData.patientName,
+        requesterUserId: user?.uid ?? null,
+        requesterName: profile?.name || user?.email || formData.patientName || null,
       });
       setMatchCount(result.matches.length);
       setMatchedGroups([...new Set(result.matches.map(match => match.bloodGroup))]);

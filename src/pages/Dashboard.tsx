@@ -111,6 +111,8 @@ export default function Dashboard() {
         });
         latestIncoming = matches;
         mergeRequests(latestIncoming, latestOutgoing);
+      }, (err) => {
+        console.error("Firebase Incoming Notification Error:", err);
       });
     }
 

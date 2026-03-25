@@ -32,8 +32,8 @@ export interface BloodRequestInput {
   urgency: string;
   phone?: string;
   description?: string;
-  requesterUserId?: string;
-  requesterName?: string;
+  requesterUserId?: string | null;
+  requesterName?: string | null;
   isSOS?: boolean;
 }
 

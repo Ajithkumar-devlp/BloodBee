@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { AlertTriangle, MapPin, ChevronRight, CheckCircle, AlarmClock } from 'lucide-react';
 import { createBloodRequestWithMatches } from '../services/bloodMatching';
+import { useAuth } from '../contexts/AuthContext';
 
 const BLOOD_GROUPS = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
@@ -16,6 +17,8 @@ export default function Emergency() {
   const [form, setForm] = useState({
     name: '', phone: '', bloodGroup: '', location: '', description: '',
   });
+
+  const { profile, user } = useAuth();
 
   const canNext = [
     !!form.bloodGroup,
@@ -35,6 +38,8 @@ export default function Emergency() {
         phone: form.phone,
         description: form.description,
         isSOS: true,
+        requesterUserId: user?.uid ?? null,
+        requesterName: profile?.name || user?.email || form.name || null,
       });
       setMatchCount(result.matches.length);
       setSent(true);
