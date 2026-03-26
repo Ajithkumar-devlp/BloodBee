@@ -1,14 +1,43 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Activity, User, Menu, Bell, LogOut, Settings, Zap, X } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { collection, query, where, onSnapshot, writeBatch, doc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 export default function Header() {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, profile, logout } = useAuth();
   const { dark, toggleDark, t } = useTheme();
+  const navigate = useNavigate();
+
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifs, setShowNotifs] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'notifications'), where('recipientUserId', '==', user.uid), where('status', '==', 'unread'));
+    const unsub = onSnapshot(q, (snap) => {
+      setUnreadCount(snap.docs.length);
+      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, [user]);
+
+  const handleNotifClick = async (n: any) => {
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'notifications', n.id), { status: 'read' });
+      await batch.commit();
+    } catch (e) {
+      console.error('Failed to mark read', e);
+    }
+    setShowNotifs(false);
+    navigate('/dashboard');
+  };
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -66,10 +95,53 @@ export default function Header() {
                 </Link>
 
                 {/* Notification bell */}
-                <button className="relative p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800">
-                  <Bell size={20} />
-                  <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-900 animate-pulse"></span>
-                </button>
+                <div className="relative">
+                  <button onClick={() => setShowNotifs(!showNotifs)} className="relative p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800">
+                    <Bell size={20} />
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white dark:border-slate-900 flex items-center justify-center text-[9px] text-white font-bold">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </button>
+                  
+                  {showNotifs && (
+                    <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-slate-800 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] border border-slate-100 dark:border-slate-700 py-2 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
+                       <h4 className="px-5 py-3 font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">Notifications</h4>
+                       {notifications.length === 0 ? (
+                         <div className="p-8 text-center bg-white dark:bg-slate-800">
+                           <div className="w-12 h-12 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-3">
+                             <Bell size={20} className="text-slate-400" />
+                           </div>
+                           <p className="text-sm font-semibold text-slate-500">No new notifications</p>
+                         </div>
+                       ) : (
+                         <div className="max-h-[300px] overflow-y-auto bg-white dark:bg-slate-800">
+                           {notifications.map(n => (
+                             <div key={n.id} onClick={() => handleNotifClick(n)} className="p-4 hover:bg-blue-50 dark:hover:bg-slate-700 cursor-pointer border-b border-slate-50 dark:border-slate-700 last:border-0 transition-colors">
+                               <div className="flex items-start gap-3">
+                                 <div className="w-2 h-2 mt-1.5 bg-blue-600 rounded-full shrink-0"></div>
+                                 <div>
+                                   <p className="font-bold text-sm text-slate-900 dark:text-white">
+                                     {n.type === 'blood_match' ? '🚨 Emergency Blood Match' : n.type === 'blood_camp' ? '🏕️ New Blood Camp' : 'Notification'}
+                                   </p>
+                                   <p className="text-xs text-slate-500 mt-1.5 font-medium leading-relaxed">
+                                     {n.type === 'blood_camp' ? (
+                                       <><span className="text-slate-700 dark:text-slate-300 font-bold">{n.campTitle}</span> at {n.location} on {n.date}</>
+                                     ) : (
+                                       <><span className="text-slate-700 dark:text-slate-300 font-bold">{n.patientName}</span> needs <span className="text-red-600 font-bold">{n.bloodGroup}</span> blood urgently at {n.location}.</>
+                                     )}
+                                   </p>
+                                   <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase">Click to view</p>
+                                 </div>
+                               </div>
+                             </div>
+                           ))}
+                         </div>
+                       )}
+                    </div>
+                  )}
+                </div>
 
                 {/* User chip */}
                 <div className="text-sm font-bold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 py-2 px-3 rounded-full border border-slate-200 dark:border-slate-700 flex items-center gap-2">

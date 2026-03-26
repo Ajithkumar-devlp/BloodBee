@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Heart, Activity, MapPin, Search } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { createBloodRequestWithMatches } from '../services/bloodMatching';
+import MobilePageHeader from '../components/MobilePageHeader';
+import { doc, collection, setDoc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 export default function RequestBlood() {
   const { user, profile } = useAuth();
@@ -10,6 +13,10 @@ export default function RequestBlood() {
   const [error, setError] = useState('');
   const [matchCount, setMatchCount] = useState(0);
   const [matchedGroups, setMatchedGroups] = useState<string[]>([]);
+  const [matchedDonors, setMatchedDonors] = useState<any[]>([]);
+  const [requestId, setRequestId] = useState('');
+  const [sentRequests, setSentRequests] = useState<Record<string, boolean>>({});
+  const [expandedDonor, setExpandedDonor] = useState<string | null>(null);
   
   const [formData, setFormData] = useState({
     patientName: '',
@@ -28,8 +35,10 @@ export default function RequestBlood() {
         requesterUserId: user?.uid ?? null,
         requesterName: profile?.name || user?.email || formData.patientName || null,
       });
-      setMatchCount(result.matches.length);
-      setMatchedGroups([...new Set(result.matches.map(match => match.bloodGroup))]);
+      setRequestId(result.requestId);
+      setMatchCount(0); // Only increments when we actually send request
+      setMatchedGroups([]); // Starts empty, filled as user manually sends requests
+      setMatchedDonors(result.matches);
       setStep(3);
     } catch (err) {
       console.error(err);
@@ -38,9 +47,55 @@ export default function RequestBlood() {
     setSubmitting(false);
   };
 
+  const sendDirectRequest = async (donor: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!requestId || sentRequests[donor.donorId]) return;
+    
+    setSentRequests(p => ({ ...p, [donor.donorId]: true }));
+    setMatchCount(p => p + 1);
+    setMatchedGroups(p => Array.from(new Set([...p, donor.bloodGroup])));
+
+    try {
+      const notificationRef = doc(collection(db, 'notifications'));
+      await setDoc(notificationRef, {
+        type: 'blood_match',
+        requestId,
+        recipientUserId: donor.donorId,
+        requesterUserId: user?.uid ?? null,
+        requesterName: profile?.name || user?.email || formData.patientName || null,
+        patientName: formData.patientName,
+        bloodGroup: formData.bloodGroup,
+        donorBloodGroup: donor.bloodGroup,
+        urgency: formData.urgency,
+        location: formData.location,
+        receiverPhone: profile?.phone ?? '',
+        receiverDescription: '',
+        isSOS: false,
+        status: 'unread',
+        createdAt: new Date().toISOString(),
+        readAt: null,
+      });
+
+      const requestRef = doc(db, 'blood_requests', requestId);
+      await updateDoc(requestRef, {
+        notifiedDonorCount: increment(1),
+        notifiedDonorIds: arrayUnion(donor.donorId),
+      });
+    } catch (err) {
+      console.error(err);
+      setSentRequests(p => ({ ...p, [donor.donorId]: false }));
+      setMatchCount(p => p - 1);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto">
-      <div className="mb-8 text-center">
+      <MobilePageHeader
+        title="Request Blood"
+        subtitle="AI matches you with compatible donors instantly"
+        backTo="/dashboard"
+      />
+      <div className="mb-8 text-center hidden md:block">
         <h1 className="text-3xl font-extrabold text-slate-900">Emergency Blood Request</h1>
         <p className="text-slate-500 mt-2">Our AI will immediately identify and notify the best compatible donors.</p>
       </div>
@@ -118,7 +173,7 @@ export default function RequestBlood() {
               <p className="text-slate-500 mb-8 max-w-sm">Checking proximity, availability, and reliability scores for the best matches.</p>
               
               <button onClick={handleSubmit} disabled={submitting} className="w-full max-w-xs py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-600/20 transition-all flex justify-center items-center">
-                {submitting ? 'Notifying...' : 'Notify Top 5 Matches'}
+                {submitting ? 'Searching...' : 'Find Matches'}
               </button>
               {error && (
                 <p className="mt-4 text-sm font-medium text-red-600">{error}</p>
@@ -155,6 +210,73 @@ export default function RequestBlood() {
                 <Search className="shrink-0 mt-0.5" size={18} />
                 <p><strong>Smart Escalation Active:</strong> If no responses are received in 15 minutes, the AI will expand the search radius to 10 miles.</p>
               </div>
+
+              {matchedDonors.length > 0 && (
+                <div className="text-left mt-8">
+                  <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                     <Activity className="text-red-500" /> AI-Matched Donors
+                  </h3>
+                  <p className="text-sm text-slate-500 mb-4">Click a profile to view details or send a direct request to notify them instantly.</p>
+                  <div className="space-y-3">
+                     {matchedDonors.map((donor, idx) => {
+                        const isExpanded = expandedDonor === donor.donorId;
+                        const hasSent = sentRequests[donor.donorId];
+                        return (
+                          <div 
+                            key={idx} 
+                            onClick={() => setExpandedDonor(isExpanded ? null : donor.donorId)}
+                            className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 transition-all cursor-pointer hover:border-blue-300"
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center font-bold text-red-600">
+                                {donor.bloodGroup}
+                              </div>
+                              <div className="flex-1">
+                                <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                                  {donor.donorName}
+                                  {hasSent && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Request Sent ✓</span>}
+                                </h4>
+                                <p className="text-xs text-slate-500">{donor.location} • {donor.donationCount} past donations</p>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">
+                                  Reliablity: {donor.reliabilityScore}/100
+                                </span>
+                              </div>
+                            </div>
+                            
+                            {/* Expandable Details */}
+                            {isExpanded && (
+                              <div className="mt-4 pt-4 border-t border-slate-100 animate-in fade-in slide-in-from-top-2">
+                                <div className="grid grid-cols-2 gap-4 text-sm mb-4 bg-slate-50 p-3 rounded-lg">
+                                  <div>
+                                    <span className="text-slate-500 text-xs block">Blood Type Match</span>
+                                    <span className="font-semibold text-slate-900">Highly Compatible</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500 text-xs block">Proximity</span>
+                                    <span className="font-semibold text-slate-900">Close to {formData.location}</span>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={(e) => sendDirectRequest(donor, e)}
+                                  disabled={hasSent}
+                                  className={`w-full py-3 rounded-xl font-bold transition-all ${
+                                    hasSent 
+                                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                    : 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-600/20 active:scale-[0.98]'
+                                  }`}
+                                >
+                                  {hasSent ? 'Notification Sent to Bell' : 'Send Direct Request'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                     })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

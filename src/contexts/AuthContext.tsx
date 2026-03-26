@@ -11,10 +11,12 @@ interface UserProfile {
   location: string;
   reliabilityScore: number;
   donationCount: number;
+  receivedCount?: number;
   photoURL?: string;
   dob?: string;
   gender?: string;
   phone?: string;
+  lastDonationDate?: string;
 }
 
 interface AuthContextType {
@@ -55,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 location: '',
                 reliabilityScore: 100,
                 donationCount: 0,
+                receivedCount: 0,
               };
               try {
                 await setDoc(doc(db, 'users', firebaseUser.uid), {
@@ -78,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               location: '',
               reliabilityScore: 100,
               donationCount: 0,
+              receivedCount: 0,
             });
           }
         );

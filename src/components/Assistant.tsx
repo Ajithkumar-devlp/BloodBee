@@ -1,70 +1,94 @@
 import { MessageSquare, X, Send } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 export default function Assistant() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([
-    { role: 'ai', text: 'Hi! I am the BloodBee AI Assistant. Do you need help finding blood or setting up a donation?' }
+    { role: 'ai', text: 'Hi! I am the Gemini-Powered BloodBee AI. I can answer questions or instantly scan our database to find the perfect donor matches for your location and blood type!' }
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [donorsContext, setDonorsContext] = useState('[]');
 
-  const getBotResponse = (query: string) => {
-    const q = query.toLowerCase();
-    
-    // Core Rules & Eligibility
-    if (q.includes('age') || q.includes('old') || q.includes('years') || q.includes('18')) {
-      return "To donate blood, you must be at least 18 years old and typically no older than 65 years. Minors cannot donate even with parental consent in most regions.";
+  // Load LIVE donor data into memory for Gemini to analyze
+  useEffect(() => {
+    async function loadDonors() {
+      try {
+        const q = query(collection(db, 'users'), where('isDonor', '==', true));
+        const snap = await getDocs(q);
+        const donorsList = snap.docs.map(doc => {
+          const d = doc.data();
+          // We don't send emails/passwords to AI, just search criteria
+          return { name: d.name, bloodGroup: d.bloodGroup, location: d.location, phone: d.phone, donations: d.donationCount, score: d.reliabilityScore };
+        });
+        setDonorsContext(JSON.stringify(donorsList));
+      } catch (err) {
+        console.error("Failed to load donors for AI context", err);
+      }
     }
-    if (q.includes('weight') || q.includes('weigh') || q.includes('kg')) {
-      return "You must weigh at least 50 kg (110 lbs) to be eligible to donate blood safely.";
-    }
-    if (q.includes('often') || q.includes('how many times') || q.includes('when can i') || q.includes('frequency')) {
-      return "Men can safely donate blood every 3 months (90 days), and women can donate every 4 months (120 days).";
-    }
-    if (q.includes('tattoo') || q.includes('piercing')) {
-      return "If you recently got a tattoo or piercing, you must usually wait 6 to 12 months before you can donate blood to ensure there are no infections.";
-    }
-    if (q.includes('alcohol') || q.includes('drink') || q.includes('smoke') || q.includes('smoking')) {
-      return "You should avoid alcohol for at least 24 hours before donating. Smoking is permitted, but it's recommended to wait at least 2 hours after donating before you smoke.";
-    }
+    loadDonors();
+  }, []);
 
-    // Process & Platform specific
-    if (q.includes('emergency') || q.includes('sos') || q.includes('urgent')) {
-      return "If this is a severe emergency, please go to the 'SOS' tab immediately! It will broadcast a high-priority alert to all compatible donors near your hospital location instantly.";
-    }
-    if (q.includes('hospital') || q.includes('where')) {
-      return "You can check the 'Hospitals' section to see a real-time list of major hospitals and their live blood stock inventory.";
-    }
-    if (q.includes('match') || q.includes('algorithm')) {
-      return "BloodBee uses a smart matching algorithm to instantly pair patients with available and medically eligible donors in their vicinity based on exact blood group compatibility.";
-    }
-    if (q.includes('thank')) {
-      return "You're very welcome! Let me know if you need anything else.";
-    }
-    
-    // Greetings
-    if (q.includes('hi') || q.includes('hello') || q.includes('hey')) {
-      return "Hello there! I'm the BloodBee AI. Feel free to ask me questions about blood donation rules, eligibility (like age/weight), or how to use the app!";
-    }
-
-    // Default Fallback
-    return "I'm still learning! Right now, I can answer questions about blood donation eligibility (age, weight, frequency), emergency SOS instructions, and hospital locations. Try asking 'What is the age limit to donate?'";
-  };
-
-  const send = (e: React.FormEvent) => {
+  const send = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || isTyping) return;
     
     const userMessage = input.trim();
     setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
     setInput('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      setMessages(prev => [...prev, { role: 'ai', text: getBotResponse(userMessage) }]);
+    try {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        setMessages(prev => [...prev, { role: 'ai', text: "Error: Missing Gemini API Key. Please add VITE_GEMINI_API_KEY to your .env file." }]);
+        setIsTyping(false);
+        return;
+      }
+
+      // Convert our internal state message format to Gemini's format
+      const geminiHistory = [
+        {
+          role: "user",
+          parts: [{ text: `SYSTEM INSTRUCTIONS: You are BloodBee AI, a smart assistant for a blood platform.
+You must be extremely helpful, concise, and friendly. 
+If the user asks to find donors, analyze this live database JSON array of currently available donors and recommend the best matches:
+JSON DATABASE: ${donorsContext}
+
+Rules:
+1. Only recommend donors that perfectly match the requested blood type, or compatible ones (e.g. O- is universal).
+2. Prioritize donors with the highest "score" or closest "location".
+3. Format your response cleanly (use bullet points or bold text if necessary).
+4. Never reveal the JSON structure directly to the user.` }]
+        },
+        { role: "model", parts: [{ text: "Understood! I am ready to help find blood donors intelligently." }] },
+        ...messages.slice(1).map(m => ({ 
+          role: m.role === 'ai' ? 'model' : 'user', 
+          parts: [{ text: m.text }] 
+        })),
+        { role: "user", parts: [{ text: userMessage }] }
+      ];
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: geminiHistory })
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.error?.message || "API Error");
+
+      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I was unable to process that request.";
+      setMessages(prev => [...prev, { role: 'ai', text: aiText }]);
+    } catch (err) {
+      console.error(err);
+      setMessages(prev => [...prev, { role: 'ai', text: "I'm having trouble connecting to my AI brain. Please check your network or API limits." }]);
+    } finally {
       setIsTyping(false);
-    }, 800 + Math.random() * 700); // Simulate realistic typing delay
+    }
   };
 
   return (

@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { Moon, Sun, Bell, Heart, Smartphone, Check, Edit3, Save, X, Camera } from 'lucide-react';
+import MobilePageHeader from '../components/MobilePageHeader';
 
 const LANGUAGES: { code: Language; label: string; native: string }[] = [
   { code: 'en', label: 'English', native: 'English' },
@@ -101,7 +102,12 @@ export default function Settings() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8 pb-16 animate-in fade-in duration-300">
-      <div>
+      <MobilePageHeader
+        title="Settings"
+        subtitle="Manage your BloodBee preferences"
+        backTo="/dashboard"
+      />
+      <div className="hidden md:block">
         <h1 className="text-3xl font-black text-slate-900 dark:text-white">{t('settings')}</h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1 font-medium">Manage your BloodBee preferences.</p>
       </div>

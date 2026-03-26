@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   query,
   updateDoc,
   where,
@@ -23,6 +24,7 @@ export interface DonorProfile {
   reliabilityScore?: number;
   donationCount?: number;
   phone?: string;
+  email?: string;
 }
 
 export interface BloodRequestInput {
@@ -122,38 +124,18 @@ export async function createBloodRequestWithMatches(input: BloodRequestInput) {
           location: profile.location || 'Nearby',
           reliabilityScore: profile.reliabilityScore ?? 0,
           donationCount: profile.donationCount ?? 0,
+          donorPhone: profile.phone || '',
+          donorEmail: profile.email || '',
         }));
 
       if (donorMatches.length > 0) {
+        // We no longer automatically dispatch notifications here!
+        // The user will do it manually in the UI step 3.
         const batch = writeBatch(db);
-
-        donorMatches.forEach(match => {
-          const notificationRef = doc(collection(db, 'notifications'));
-          batch.set(notificationRef, {
-            type: 'blood_match',
-            requestId: requestRef.id,
-            recipientUserId: match.donorId,
-            requesterUserId: input.requesterUserId ?? null,
-            requesterName: input.requesterName ?? input.patientName,
-            patientName: input.patientName,
-            bloodGroup: input.bloodGroup,
-            donorBloodGroup: match.bloodGroup,
-            urgency: input.urgency,
-            location: input.location,
-            phone: input.phone ?? '',
-            description: input.description ?? '',
-            isSOS: !!input.isSOS,
-            status: 'unread',
-            createdAt,
-            readAt: null,
-          });
-        });
-
         batch.update(requestRef, {
-          notifiedDonorCount: donorMatches.length,
-          notifiedDonorIds: donorMatches.map(match => match.donorId),
+          notifiedDonorCount: 0,
+          notifiedDonorIds: [], // Initially empty, populated as user sends manual requests
         });
-
         await batch.commit();
       }
 
@@ -172,20 +154,82 @@ export async function acceptBloodRequestMatch(requestId: string, donorUserId: st
   const acceptedAt = new Date().toISOString();
   const batch = writeBatch(db);
 
+  // Fetch donor's full profile for contact details
+  const donorDoc = await getDoc(doc(db, 'users', donorUserId));
+  const donorProfile = donorDoc.exists() ? donorDoc.data() : {};
+  const donorPhone = donorProfile.phone || '';
+  const donorEmail = donorProfile.email || '';
+  const donorBloodGroup = donorProfile.bloodGroup || '';
+  const donorLocation = donorProfile.location || '';
+
+  // Update the blood request with donor details (visible to receiver)
   batch.update(requestRef, {
     status: 'matched',
     acceptedDonorId: donorUserId,
     acceptedDonorName: donorName,
+    acceptedDonorPhone: donorPhone,
+    acceptedDonorEmail: donorEmail,
+    acceptedDonorBloodGroup: donorBloodGroup,
+    acceptedDonorLocation: donorLocation,
     acceptedAt,
   });
 
+  // Figure out who the original requester is from existing notifications
+  let requesterUserId: string | null = null;
+  let patientName = '';
+  let bloodGroup = '';
+  let location = '';
+  let receiverPhone = '';
+  let urgency = '';
+
   notificationsSnapshot.forEach(notificationDoc => {
-    const isAcceptedDonor = notificationDoc.data().recipientUserId === donorUserId;
+    const data = notificationDoc.data();
+    const isAcceptedDonor = data.recipientUserId === donorUserId;
     batch.update(notificationDoc.ref, {
       status: isAcceptedDonor ? 'accepted' : 'closed',
       readAt: acceptedAt,
+      // Store donor details on accepted notification (donor sees their own accepted card)
+      ...(isAcceptedDonor ? {
+        acceptedDonorName: donorName,
+        acceptedDonorPhone: donorPhone,
+        acceptedDonorEmail: donorEmail,
+        acceptedDonorBloodGroup: donorBloodGroup,
+        acceptedDonorLocation: donorLocation,
+      } : {}),
     });
+    if (isAcceptedDonor) {
+      requesterUserId = data.requesterUserId;
+      patientName = data.patientName;
+      bloodGroup = data.bloodGroup;
+      location = data.location;
+      receiverPhone = data.receiverPhone || '';
+      urgency = data.urgency;
+    }
   });
+
+  // Write acceptance notification to the RECEIVER so they get alerted with donor details
+  if (requesterUserId) {
+    const receiverNotifRef = doc(collection(db, 'notifications'));
+    batch.set(receiverNotifRef, {
+      type: 'donor_accepted',
+      requestId,
+      recipientUserId: requesterUserId,
+      donorUserId,
+      donorName,
+      donorPhone,
+      donorEmail,
+      donorBloodGroup,
+      donorLocation,
+      patientName,
+      bloodGroup,
+      location,
+      receiverPhone, // echo back so receiver sees request phone
+      urgency,
+      status: 'unread',
+      createdAt: acceptedAt,
+      readAt: null,
+    });
+  }
 
   await batch.commit();
 }
@@ -196,3 +240,89 @@ export async function markNotificationRead(notificationId: string) {
     readAt: new Date().toISOString(),
   });
 }
+
+/**
+ * Called when a donor physically completes a blood donation.
+ * - Marks the blood_request as 'completed'
+ * - Increments donationCount on the donor's user profile
+ * - Recalculates reliabilityScore (max 100)
+ * - Sets lastDonationDate
+ * - Writes a 'donation_completed' notification to the receiver
+ */
+export async function markDonationCompleted(
+  requestId: string,
+  donorUserId: string,
+  requesterUserId: string | null,
+) {
+  const completedAt = new Date().toISOString();
+  const batch = writeBatch(db);
+
+  // 1. Mark the blood request as completed
+  const requestRef = doc(db, 'blood_requests', requestId);
+  const reqSnap = await getDoc(requestRef);
+  const reqData = reqSnap.exists() ? reqSnap.data() : null;
+  const actualRequesterId = requesterUserId || reqData?.requesterUserId;
+
+  batch.update(requestRef, {
+    status: 'completed',
+    completedAt,
+  });
+
+  // 2. Update the accepted notification to 'completed'
+  const notifQuery = query(
+    collection(db, 'notifications'),
+    where('requestId', '==', requestId),
+    where('recipientUserId', '==', donorUserId),
+  );
+  const notifSnap = await getDocs(notifQuery);
+  notifSnap.forEach(n => {
+    batch.update(n.ref, { status: 'completed', completedAt });
+  });
+
+  // 3. Update donor profile: increment donationCount, update reliabilityScore & lastDonationDate
+  const donorRef = doc(db, 'users', donorUserId);
+  const donorSnap = await getDoc(donorRef);
+  const donorData = donorSnap.exists() ? donorSnap.data() : {};
+  const prevCount = (donorData.donationCount ?? 0) as number;
+  const prevScore = (donorData.reliabilityScore ?? 80) as number;
+  const newCount = prevCount + 1;
+  // Reliability grows by 2 per donation, capped at 100
+  const newScore = Math.min(100, prevScore + 2);
+
+  batch.update(donorRef, {
+    donationCount: newCount,
+    reliabilityScore: newScore,
+    lastDonationDate: completedAt,
+  });
+
+  // 4. Update the receiver profile: increment receivedCount
+  if (actualRequesterId) {
+    const receiverRef = doc(db, 'users', actualRequesterId);
+    const receiverSnap = await getDoc(receiverRef);
+    if (receiverSnap.exists()) {
+      const receiverData = receiverSnap.data();
+      const prevReceivedCount = (receiverData.receivedCount ?? 0) as number;
+      batch.update(receiverRef, {
+        receivedCount: prevReceivedCount + 1,
+      });
+    }
+
+    // 5. Notify the receiver that the donation is done
+    const completionNotifRef = doc(collection(db, 'notifications'));
+    batch.set(completionNotifRef, {
+      type: 'donation_completed',
+      requestId,
+      recipientUserId: actualRequesterId,
+      donorUserId,
+      donorName: donorData.name || 'Your Donor',
+      donorBloodGroup: donorData.bloodGroup || '',
+      message: 'Your blood request has been fulfilled. The donor has completed the donation.',
+      status: 'unread',
+      createdAt: completedAt,
+      readAt: null,
+    });
+  }
+
+  await batch.commit();
+}
+

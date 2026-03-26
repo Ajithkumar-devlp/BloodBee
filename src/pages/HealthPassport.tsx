@@ -1,6 +1,7 @@
 import { Calendar, Heart, Shield, Share2, Download, CheckCircle, RotateCcw, Award, MapPin } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useState } from 'react';
+import MobilePageHeader from '../components/MobilePageHeader';
 
 export default function HealthPassport() {
   const { user, profile } = useAuth();
@@ -14,6 +15,11 @@ export default function HealthPassport() {
 
   return (
     <div className="max-w-md mx-auto space-y-8 animate-in fade-in duration-500 pb-10">
+      <MobilePageHeader
+        title="Donor Passport"
+        subtitle="Your verified blood donor identity card"
+        backTo="/dashboard"
+      />
       <div className="text-center space-y-2">
         <h1 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">Donor Passport</h1>
         <p className="text-slate-500 dark:text-slate-400 font-medium text-lg">Your official medical identity card.</p>

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
-import { AlertTriangle, MapPin, ChevronRight, CheckCircle, AlarmClock } from 'lucide-react';
+import { AlertTriangle, MapPin, ChevronRight, CheckCircle, AlarmClock, Sparkles } from 'lucide-react';
 import { createBloodRequestWithMatches } from '../services/bloodMatching';
+import { parseEmergencyText } from '../services/aiParser';
 import { useAuth } from '../contexts/AuthContext';
 
 const BLOOD_GROUPS = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
@@ -14,6 +15,8 @@ export default function Emergency() {
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [matchCount, setMatchCount] = useState(0);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiParsing, setAiParsing] = useState(false);
   const [form, setForm] = useState({
     name: '', phone: '', bloodGroup: '', location: '', description: '',
   });
@@ -45,6 +48,36 @@ export default function Emergency() {
       setSent(true);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
+  };
+
+  const handleAIParsing = async () => {
+    if (!aiPrompt.trim()) return;
+    setAiParsing(true);
+    try {
+      const parsed = await parseEmergencyText(aiPrompt);
+      if (parsed) {
+        setForm(prev => ({
+          ...prev,
+          name: parsed.name || prev.name,
+          phone: parsed.phone || prev.phone,
+          bloodGroup: parsed.bloodGroup || prev.bloodGroup,
+          location: parsed.location || prev.location,
+          description: parsed.description || prev.description,
+        }));
+        
+        // Fast forward to confirm page if data is solid
+        if (parsed.bloodGroup && parsed.phone && parsed.location) {
+          setStep(3);
+        } else {
+          // If the AI missed something, let them manually fill the rest from Step 1
+          if (parsed.bloodGroup) setStep(1);
+        }
+      } else {
+        alert("Make sure you add 'VITE_GEMINI_API_KEY' inside the .env file to use the AI parser!");
+      }
+    } finally {
+      setAiParsing(false);
+    }
   };
 
   if (sent) {
@@ -143,14 +176,14 @@ export default function Emergency() {
         {/* Main Interactive Card */}
         <div className="bg-white/10 backdrop-blur-2xl rounded-[2.5rem] p-8 border border-white/20 shadow-2xl shadow-red-900/50 min-h-[320px] flex flex-col transition-all duration-500">
 
-          {/* Step 0 — Blood Type */}
+          {/* Step 0 — Blood Type or AI Parser */}
           {step === 0 && (
             <div className="flex-1 flex flex-col gap-6 animate-in slide-in-from-right-4">
               <div className="text-center">
                 <h2 className="text-3xl font-black text-white mb-2 uppercase drop-shadow-sm">{t('bgGroup')}</h2>
                 <p className="text-red-200 text-sm font-bold tracking-wide">Select the blood group required IMMEDIATELY</p>
               </div>
-              <div className="grid grid-cols-4 gap-3 flex-1 items-center">
+              <div className="grid grid-cols-4 gap-3 items-center">
                 {BLOOD_GROUPS.map(g => (
                   <button key={g} onClick={() => setForm({ ...form, bloodGroup: g })}
                     className={`h-16 rounded-2xl font-black text-xl transition-all duration-300 border-2 ${form.bloodGroup === g
@@ -159,6 +192,35 @@ export default function Emergency() {
                     {g}
                   </button>
                 ))}
+              </div>
+
+              <div className="mt-2 text-center flex items-center gap-4">
+                <div className="h-px bg-white/20 flex-1"></div>
+                <span className="text-white/50 text-xs font-black tracking-widest uppercase">OR USE AI FAST-FILL</span>
+                <div className="h-px bg-white/20 flex-1"></div>
+              </div>
+
+              <div className="bg-gradient-to-br from-indigo-900/50 to-purple-900/50 rounded-2xl p-4 border border-indigo-400/30 flex flex-col gap-3 shadow-inner">
+                <p className="text-indigo-200 text-xs font-bold flex items-center gap-1.5 uppercase tracking-wider">
+                  <Sparkles size={14} className="text-indigo-300 animate-pulse" /> Just Paste & Go
+                </p>
+                <textarea 
+                  value={aiPrompt}
+                  onChange={e => setAiPrompt(e.target.value)}
+                  placeholder="Paste SMS here... (e.g. Need O- at Apollo hospital ICU ward B for John, contact 9999999999)"
+                  rows={2}
+                  className="w-full bg-black/30 border border-indigo-400/20 text-white p-3 rounded-xl placeholder:text-indigo-200/40 text-sm font-medium resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                <button 
+                  onClick={handleAIParsing}
+                  disabled={aiParsing || !aiPrompt.trim()}
+                  className="bg-indigo-500 hover:bg-indigo-400 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
+                >
+                  {aiParsing ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : <Sparkles size={14} />}
+                  {aiParsing ? 'Extracting Details...' : 'Parse with Gemini AI ⚡'}
+                </button>
               </div>
             </div>
           )}

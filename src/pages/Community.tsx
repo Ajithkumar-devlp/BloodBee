@@ -3,7 +3,7 @@ import { collection, addDoc, onSnapshot, orderBy, query } from 'firebase/firesto
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { Heart, MessageSquare, Send, Users, Trash2 } from 'lucide-react';
+import { Heart, MessageSquare, Send, Users, Trash2, Sparkles } from 'lucide-react';
 
 interface Story {
   id: string;
@@ -21,6 +21,38 @@ export default function Community() {
   const [stories, setStories] = useState<Story[]>([]);
   const [message, setMessage] = useState('');
   const [posting, setPosting] = useState(false);
+  const [polishing, setPolishing] = useState(false);
+
+  const handleAiPolish = async () => {
+    if (!message.trim() || polishing) return;
+    setPolishing(true);
+    try {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        alert("Gemini API key is missing. Please add VITE_GEMINI_API_KEY.");
+        return;
+      }
+      
+      const prompt = `Rewrite this short blood donation community post organically to make it inspiring, grammatically correct, and engaging. Keep it real, under 2 sentences, no hashtags. 
+CRITICAL RULE: Return ONLY the exact rewritten text and absolutely nothing else. Do not output conversational filler like "Here is your rewritten text", do not offer options.
+Original: "${message}"`;
+      
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+      const data = await res.json();
+      let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) {
+        setMessage(text.trim());
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to reach AI for polishing.");
+    } finally {
+      setPolishing(false);
+    }
+  };
 
   useEffect(() => {
     // Listen to stories
@@ -93,11 +125,19 @@ export default function Community() {
           placeholder="Tell the community about your donation experience, or how BloodBee helped you..."
           className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-emerald-500 outline-none resize-none font-medium transition-all"
         />
-        <button type="submit" disabled={posting || !message.trim()}
-          className="flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-          {posting ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send size={18} />}
-          {posting ? 'Posting...' : 'Share Story'}
-        </button>
+        <div className="flex gap-3">
+          <button type="button" onClick={handleAiPolish} disabled={polishing || !message.trim() || posting}
+            className="flex flex-1 items-center justify-center gap-2 px-6 py-3 bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 font-black rounded-2xl transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-200 dark:border-indigo-800">
+            {polishing ? <div className="w-4 h-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin" /> : <Sparkles size={18} />}
+            {polishing ? 'Polishing...' : 'AI Polish ✨'}
+          </button>
+
+          <button type="submit" disabled={posting || !message.trim() || polishing}
+            className="flex flex-[2] items-center justify-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+            {posting ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send size={18} />}
+            {posting ? 'Posting...' : 'Share Story'}
+          </button>
+        </div>
       </form>
 
       {/* Stories Feed */}

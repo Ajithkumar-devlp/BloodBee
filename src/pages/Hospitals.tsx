@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { MapPin, Phone, Hospital as HospitalIcon, Clock, Search } from 'lucide-react';
+import MobilePageHeader from '../components/MobilePageHeader';
 
 type BloodStock = { [group: string]: 'Critical' | 'Low' | 'Normal' };
 
@@ -46,6 +47,11 @@ export default function Hospitals() {
 
   return (
     <div className="max-w-7xl mx-auto p-4 lg:p-8 animate-in fade-in duration-500">
+      <MobilePageHeader
+        title="Hospitals"
+        subtitle="Blood stock &amp; emergency info across Tamil Nadu"
+        backTo="/dashboard"
+      />
       <div className="mb-8 flex flex-col lg:flex-row lg:items-end justify-between gap-6">
         <div>
           <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">Hospitals in Tamil Nadu</h1>
