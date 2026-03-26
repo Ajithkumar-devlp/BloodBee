@@ -136,7 +136,7 @@ User profile: Name=${profile.name||'Donor'}, Blood=${profile.bloodGroup||'Unknow
 Return ONLY a JSON array, no markdown, no extra text. Each element: ["emoji", "tip under 65 chars", "category (Hydration|Nutrition|Rest|Activity|Mental)"].
 Make tips specific, medically sound, and varied. Address their exact blood group needs.`;
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: carePrompt }] }] })
       });
@@ -182,7 +182,7 @@ JSON Structure:
 }
 Return valid JSON only. Avoid using words like 'Neural', 'Neural-net', 'Machine-learning' or 'Life-system' in the output. Focus on Emergency, Guard, and Human terms.`;
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
       });
@@ -364,7 +364,7 @@ Return valid JSON only. Avoid using words like 'Neural', 'Neural-net', 'Machine-
 Analyze each region and return a JSON array. Output ONLY a JSON array, no codeblocks, no extra text.
 Structure: [{"location": "CityName", "crisis": "High|Medium|Low", "score": 0-100, "tip": "1 actionable sentence under 60 chars"}]
 Rules: Higher donor count = Lower crisis score. Low donor regions need urgent action. Be concise.`;
-          fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+          fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: [{ parts: [{ text: heatmapPrompt }] }] })
           })
