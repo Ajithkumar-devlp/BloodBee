@@ -73,7 +73,7 @@ export default function Emergency() {
           if (parsed.bloodGroup) setStep(1);
         }
       } else {
-        alert("Make sure you add 'VITE_GEMINI_API_KEY' inside the .env file to use the AI parser!");
+        alert("Make sure you add 'VITE_GROQ_API_KEY' inside the .env file to use the AI parser!");
       }
     } finally {
       setAiParsing(false);

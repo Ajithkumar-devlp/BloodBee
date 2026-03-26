@@ -127,8 +127,8 @@ export default function Dashboard() {
   const [loadingCare, setLoadingCare] = useState(false);
 
   const refreshAiCare = async () => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!apiKey || !profile) return;
+    const { aiComplete, isAIConfigured } = await import('../services/aiClient');
+    if (!isAIConfigured() || !profile) return;
     setLoadingCare(true);
     const lastDonation = profile.lastDonationDate ? `Last donation: ${profile.lastDonationDate}.` : profile.donationCount ? `Has donated ${profile.donationCount} times.` : 'Recent first-time donor.';
     const carePrompt = `You are a medical wellness AI for BloodBee. Generate exactly 5 personalized post-donation care tips for a blood donor.
@@ -136,15 +136,12 @@ User profile: Name=${profile.name||'Donor'}, Blood=${profile.bloodGroup||'Unknow
 Return ONLY a JSON array, no markdown, no extra text. Each element: ["emoji", "tip under 65 chars", "category (Hydration|Nutrition|Rest|Activity|Mental)"].
 Make tips specific, medically sound, and varied. Address their exact blood group needs.`;
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: carePrompt }] }] })
-      });
-      const data = await res.json();
-      let text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      text = text.replace(/```json/g,'').replace(/```/g,'').trim();
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed) && parsed.length) setAiCare(parsed);
+      let text = await aiComplete(carePrompt);
+      if (text) {
+        text = text.replace(/```json/g,'').replace(/```/g,'').trim();
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed.length) setAiCare(parsed);
+      }
     } catch { /* keep existing tips */ }
     setLoadingCare(false);
   };
@@ -152,8 +149,8 @@ Make tips specific, medically sound, and varied. Address their exact blood group
   const loadAiInsights = useCallback(async () => {
     try {
       setLoadingAi(true);
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey || !profile) return;
+      const { aiComplete, isAIConfigured } = await import('../services/aiClient');
+      if (!isAIConfigured() || !profile) return;
 
       const currentActiveRequests = activeRequests.map(r => `${r.bloodGroup} at ${r.location}`).join(', ');
 
@@ -182,12 +179,7 @@ JSON Structure:
 }
 Return valid JSON only. Avoid using words like 'Neural', 'Neural-net', 'Machine-learning' or 'Life-system' in the output. Focus on Emergency, Guard, and Human terms.`;
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
-      const data = await res.json();
-      let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      let text = await aiComplete(prompt);
       
       if (text) {
         text = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -357,24 +349,22 @@ Return valid JSON only. Avoid using words like 'Neural', 'Neural-net', 'Machine-
         setHeatmap(sorted);
 
         // Generate AI insights for the heatmap
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        if (apiKey && sorted.length > 0) {
-          const regionList = sorted.map(r => `${r.location}: ${r.count} donors`).join(', ');
-          const heatmapPrompt = `You are a blood crisis analyst AI for BloodBee. Given the following real-time blood donor distribution: [${regionList}]. 
+        if (sorted.length > 0) {
+          import('../services/aiClient').then(async ({ aiComplete, isAIConfigured }) => {
+            if (!isAIConfigured()) return;
+            const regionList = sorted.map(r => `${r.location}: ${r.count} donors`).join(', ');
+            const heatmapPrompt = `You are a blood crisis analyst AI for BloodBee. Given the following real-time blood donor distribution: [${regionList}]. 
 Analyze each region and return a JSON array. Output ONLY a JSON array, no codeblocks, no extra text.
 Structure: [{"location": "CityName", "crisis": "High|Medium|Low", "score": 0-100, "tip": "1 actionable sentence under 60 chars"}]
 Rules: Higher donor count = Lower crisis score. Low donor regions need urgent action. Be concise.`;
-          fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: heatmapPrompt }] }] })
-          })
-          .then(r => r.json())
-          .then(data => {
-            let text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-            text = text.replace(/```json/g,'').replace(/```/g,'').trim();
-            try { setAiHeatmapInsights(JSON.parse(text)); } catch { /* ignore */ }
-          })
-          .catch(console.error);
+            try {
+              let text = await aiComplete(heatmapPrompt);
+              if (text) {
+                text = text.replace(/```json/g,'').replace(/```/g,'').trim();
+                try { setAiHeatmapInsights(JSON.parse(text)); } catch { /* ignore */ }
+              }
+            } catch (err) { console.error(err); }
+          });
         }
       },
       (err) => console.error("Heatmap Error:", err)

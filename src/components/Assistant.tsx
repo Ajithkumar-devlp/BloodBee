@@ -41,18 +41,18 @@ export default function Assistant() {
     setIsTyping(true);
 
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) {
-        setMessages(prev => [...prev, { role: 'ai', text: "Error: Missing Gemini API Key. Please add VITE_GEMINI_API_KEY to your .env file." }]);
+      const { aiChat, isAIConfigured } = await import('../services/aiClient');
+      if (!isAIConfigured()) {
+        setMessages(prev => [...prev, { role: 'ai', text: "Error: Missing Groq API Key. Please add VITE_GROQ_API_KEY to your .env file." }]);
         setIsTyping(false);
         return;
       }
 
-      // Convert our internal state message format to Gemini's format
-      const geminiHistory = [
+      // Build chat history in OpenAI-compatible format for Groq
+      const chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
         {
-          role: "user",
-          parts: [{ text: `SYSTEM INSTRUCTIONS: You are BloodBee AI, a smart assistant for a blood platform.
+          role: 'system',
+          content: `You are BloodBee AI, a smart assistant for a blood donation platform.
 You must be extremely helpful, concise, and friendly. 
 If the user asks to find donors, analyze this live database JSON array of currently available donors and recommend the best matches:
 JSON DATABASE: ${donorsContext}
@@ -61,28 +61,17 @@ Rules:
 1. Only recommend donors that perfectly match the requested blood type, or compatible ones (e.g. O- is universal).
 2. Prioritize donors with the highest "score" or closest "location".
 3. Format your response cleanly (use bullet points or bold text if necessary).
-4. Never reveal the JSON structure directly to the user.` }]
+4. Never reveal the JSON structure directly to the user.`
         },
-        { role: "model", parts: [{ text: "Understood! I am ready to help find blood donors intelligently." }] },
-        ...messages.slice(1).map(m => ({ 
-          role: m.role === 'ai' ? 'model' : 'user', 
-          parts: [{ text: m.text }] 
+        ...messages.slice(1).map(m => ({
+          role: (m.role === 'ai' ? 'assistant' : 'user') as 'assistant' | 'user',
+          content: m.text
         })),
-        { role: "user", parts: [{ text: userMessage }] }
+        { role: 'user' as const, content: userMessage }
       ];
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: geminiHistory })
-      });
-
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error?.message || "API Error");
-
-      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I was unable to process that request.";
-      setMessages(prev => [...prev, { role: 'ai', text: aiText }]);
+      const aiText = await aiChat(chatMessages);
+      setMessages(prev => [...prev, { role: 'ai', text: aiText || "I was unable to process that request." }]);
     } catch (err) {
       console.error(err);
       setMessages(prev => [...prev, { role: 'ai', text: "I'm having trouble connecting to my AI brain. Please check your network or API limits." }]);

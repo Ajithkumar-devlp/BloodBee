@@ -27,9 +27,9 @@ export default function Community() {
     if (!message.trim() || polishing) return;
     setPolishing(true);
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) {
-        alert("Gemini API key is missing. Please add VITE_GEMINI_API_KEY.");
+      const { aiComplete, isAIConfigured } = await import('../services/aiClient');
+      if (!isAIConfigured()) {
+        alert("Groq API key is missing. Please add VITE_GROQ_API_KEY.");
         return;
       }
       
@@ -37,12 +37,7 @@ export default function Community() {
 CRITICAL RULE: Return ONLY the exact rewritten text and absolutely nothing else. Do not output conversational filler like "Here is your rewritten text", do not offer options.
 Original: "${message}"`;
       
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
-      const data = await res.json();
-      let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const text = await aiComplete(prompt);
       if (text) {
         setMessage(text.trim());
       }
@@ -53,6 +48,7 @@ Original: "${message}"`;
       setPolishing(false);
     }
   };
+
 
   useEffect(() => {
     // Listen to stories
