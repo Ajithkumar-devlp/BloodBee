@@ -751,7 +751,7 @@ Rules: Higher donor count = Lower crisis score. Low donor regions need urgent ac
                  activeRequests.map(req => {
                    const isExactMatch = req.bloodGroup === profile?.bloodGroup;
                    const isCompatible = profile?.bloodGroup === 'O-' || 
-                                       (profile?.bloodGroup === 'O+' && !req.bloodGroup.includes('-')) ||
+                                       (profile?.bloodGroup === 'O+' && !(req.bloodGroup?.includes('-'))) ||
                                        (req.bloodGroup === 'AB+') ||
                                        (req.bloodGroup === profile?.bloodGroup);
                    
@@ -774,7 +774,7 @@ Rules: Higher donor count = Lower crisis score. Low donor regions need urgent ac
                        </div>
                      )}
 
-                     {req.urgency.includes('Critical') && (
+                     {req.urgency?.includes('Critical') && (
                        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-red-500 via-red-600 to-red-500"></div>
                      )}
                     <button onClick={() => handleDismissRequest(req)}
@@ -817,7 +817,7 @@ Rules: Higher donor count = Lower crisis score. Low donor regions need urgent ac
                         </div>
                       )}
 
-                      {req.urgency.includes('Critical') && (
+                      {req.urgency?.includes('Critical') && (
                         <div className="flex items-center gap-2 text-xs font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-3 rounded-xl border border-red-100 dark:border-red-800 mb-4">
                           <Activity size={14} className="animate-pulse" /> CRITICAL PRIORITY
                         </div>
@@ -1023,9 +1023,9 @@ Rules: Higher donor count = Lower crisis score. Low donor regions need urgent ac
                        const pos = positions[i] || {cx: 50+i*50, cy: 90};
                        const intensity = region.count / maxCount;
                        const r = 10 + intensity * 28;
-                       const aiInfo = aiHeatmapInsights.find(a => a.location?.toLowerCase() === region.location.toLowerCase());
+                       const aiInfo = aiHeatmapInsights.find(a => a.location?.toLowerCase() === region.location?.toLowerCase());
                        const color = aiInfo?.crisis === 'High' ? '#f97316' : aiInfo?.crisis === 'Medium' ? '#fbbf24' : '#34d399';
-                       const isUserCity = userCity && region.location.toLowerCase().includes(userCity);
+                       const isUserCity = userCity && region.location?.toLowerCase().includes(userCity);
                        return (
                          <g key={i}>
                            <circle cx={pos.cx} cy={pos.cy} r={r+8} fill={color} opacity={0.08} />
@@ -1071,7 +1071,7 @@ Rules: Higher donor count = Lower crisis score. Low donor regions need urgent ac
                  heatmap.slice(0, 4).map((region, i) => {
                    const maxCount = heatmap[0]?.count || 1;
                    const percentage = Math.max(10, Math.round((region.count / maxCount) * 100));
-                   const aiInfo = aiHeatmapInsights.find(a => a.location?.toLowerCase() === region.location.toLowerCase());
+                   const aiInfo = aiHeatmapInsights.find(a => a.location?.toLowerCase() === region.location?.toLowerCase());
                    const crisis = aiInfo?.crisis || (percentage > 80 ? 'Low' : percentage > 40 ? 'Medium' : 'High');
                    const colorClass = crisis === 'High' ? 'bg-orange-500' : crisis === 'Medium' ? 'bg-yellow-400' : 'bg-emerald-400';
                    const badgeClass = crisis === 'High' ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' : crisis === 'Medium' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300' : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
