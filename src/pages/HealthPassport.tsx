@@ -1,17 +1,74 @@
 import { Calendar, Heart, Shield, Share2, Download, CheckCircle, RotateCcw, Award, MapPin } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import MobilePageHeader from '../components/MobilePageHeader';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 export default function HealthPassport() {
   const { user, profile } = useAuth();
   const [isFlipped, setIsFlipped] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const donationDate = new Date('2026-01-12');
   const nextEligible = new Date(donationDate);
   nextEligible.setMonth(nextEligible.getMonth() + 3);
   const donorId = user ? `BB-${new Date().getFullYear()}-${user.uid.slice(0, 4).toUpperCase()}` : 'BB-GUEST-2026';
   const isEligible = new Date() >= nextEligible;
+
+  const downloadPDF = async () => {
+    if (!cardRef.current || isGenerating) return;
+    try {
+      setIsGenerating(true);
+      // Temporarily unflip to ensure front side is captured
+      const wasFlipped = isFlipped;
+      if (wasFlipped) setIsFlipped(false);
+      
+      // Small delay to let React render the flip
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      const canvas = await html2canvas(cardRef.current, { scale: 2, useCORS: true, backgroundColor: null });
+      const imgData = canvas.toDataURL('image/png');
+      
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'px',
+        format: [canvas.width, canvas.height]
+      });
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`BloodBee_Passport_${donorId}.pdf`);
+
+      if (wasFlipped) setIsFlipped(true);
+    } catch (err) {
+      console.error('Error generating PDF', err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const shareCard = async () => {
+    if (!cardRef.current || isGenerating) return;
+    try {
+      setIsGenerating(true);
+      
+      if (navigator.share) {
+        // Just text sharing for better compatibility across devices to bloodbee context
+        await navigator.share({
+          title: 'BloodBee Donor Passport',
+          text: `Check out my BloodBee Donor Passport! I have a reliable score of ${profile?.reliabilityScore ?? 100}% and have donated blood ${profile?.donationCount ?? 0} times. Join the hive!`,
+          url: window.location.origin
+        });
+      } else {
+        alert("Sharing not supported on this browser.");
+      }
+    } catch (err) {
+      console.error("Error sharing:", err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   return (
     <div className="max-w-md mx-auto space-y-8 animate-in fade-in duration-500 pb-10">
@@ -27,7 +84,7 @@ export default function HealthPassport() {
 
       {/* 3D Flip Card Container */}
       <div className="relative w-full min-h-[220px] xs:min-h-[240px] perspective-1000 group cursor-pointer" onClick={() => setIsFlipped(!isFlipped)}>
-        <div className={`w-full h-full absolute inset-0 preserve-3d transition-transform duration-700 ${isFlipped ? 'rotate-y-180' : ''}`}>
+        <div ref={cardRef} className={`w-full h-full absolute inset-0 preserve-3d transition-transform duration-700 ${isFlipped ? 'rotate-y-180' : ''}`}>
           
           {/* FRONT OF CARD */}
           <div className="absolute inset-0 backface-hidden rounded-[2rem] bg-gradient-to-br from-red-600 via-red-700 to-red-950 p-6 flex flex-col text-white shadow-2xl overflow-hidden border border-white/20">
@@ -173,11 +230,19 @@ export default function HealthPassport() {
 
       {/* Actions */}
       <div className="flex gap-4">
-        <button className="flex-1 flex items-center justify-center gap-2 py-5 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-900 dark:text-white font-black rounded-3xl transition-all shadow-sm">
-          <Share2 size={20} /> Share Card
+        <button 
+          onClick={shareCard}
+          disabled={isGenerating}
+          className="flex-1 flex items-center justify-center gap-2 py-5 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-900 dark:text-white font-black rounded-3xl transition-all shadow-sm disabled:opacity-50"
+        >
+          <Share2 size={20} /> {isGenerating ? 'Wait...' : 'Share Card'}
         </button>
-        <button className="flex-1 flex items-center justify-center gap-2 py-5 bg-red-600 hover:bg-red-700 text-white font-black rounded-3xl transition-all shadow-xl shadow-red-500/30">
-          <Download size={20} /> Download PDF
+        <button 
+          onClick={downloadPDF}
+          disabled={isGenerating}
+          className="flex-1 flex items-center justify-center gap-2 py-5 bg-red-600 hover:bg-red-700 text-white font-black rounded-3xl transition-all shadow-xl shadow-red-500/30 disabled:opacity-50"
+        >
+          <Download size={20} /> {isGenerating ? 'Wait...' : 'Download PDF'}
         </button>
       </div>
 
